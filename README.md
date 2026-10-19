@@ -7,7 +7,7 @@
 - Owner: Policy
 - Runtime: Java 22 and Spring Boot
 - Data store: eia_policy (tx schema)
-- Depends on: eia-policy-expert, eia-contracts, eia-open-insurance-libs
+- Depends on: eia-policy-expert, eia-contracts, eia-platform/libs
 
 ## Purpose
 
