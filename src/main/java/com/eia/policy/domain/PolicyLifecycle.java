@@ -35,12 +35,16 @@ public final class PolicyLifecycle {
 
     public static String normalizeStatus(String rawStatus) {
         if (rawStatus == null || rawStatus.isBlank()) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "INVALID_STATUS", "status is required");
+            throw new ApiException(HttpStatus.BAD_REQUEST, "INVALID_STATUS", "status is required",
+                    java.util.List.of(new ApiException.FieldIssue(
+                            "status", "INVALID_STATUS", "status is required")));
         }
         String status = rawStatus.trim().toUpperCase(Locale.ROOT);
         if (!STATUSES.contains(status)) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "INVALID_STATUS",
-                    "Unknown policy status: " + rawStatus);
+                    "Unknown policy status: " + rawStatus,
+                    java.util.List.of(new ApiException.FieldIssue(
+                            "status", "INVALID_STATUS", "Unknown policy status: " + rawStatus)));
         }
         return status;
     }
@@ -49,13 +53,21 @@ public final class PolicyLifecycle {
         String from = normalizeStatus(fromStatus);
         String to = normalizeStatus(toStatus);
         if (from.equals(to)) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "INVALID_STATUS_TRANSITION",
-                    "Policy is already in status " + from);
+            throw invalidTransition("Policy is already in status " + from);
         }
         if (!TRANSITIONS.getOrDefault(from, Set.of()).contains(to)) {
-            throw new ApiException(HttpStatus.BAD_REQUEST, "INVALID_STATUS_TRANSITION",
-                    "Cannot transition policy from " + from + " to " + to);
+            throw invalidTransition("Cannot transition policy from " + from + " to " + to);
         }
         return to;
+    }
+
+    /**
+     * An illegal lifecycle transition is a state conflict (SPEC 6.11 CONFLICT,
+     * 409), not a malformed request.
+     */
+    private static ApiException invalidTransition(String message) {
+        return new ApiException(HttpStatus.CONFLICT, "INVALID_STATUS_TRANSITION", message,
+                java.util.List.of(new ApiException.FieldIssue(
+                        "status", "INVALID_STATUS_TRANSITION", message)));
     }
 }

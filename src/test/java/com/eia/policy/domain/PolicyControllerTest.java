@@ -14,6 +14,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
@@ -26,6 +27,8 @@ import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -49,48 +52,338 @@ class PolicyControllerTest {
     private PolicyClient client;
 
     @Test
-    void requiresTenantHeader() throws Exception {
+    void requiresTenantHeaderAsProblem() throws Exception {
         mvc.perform(get("/api/v1/policies"))
                 .andExpect(status().isBadRequest())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.type").value(
+                        "https://errors.eia-open-insurance.example/policy/missing-tenant-header"))
+                .andExpect(jsonPath("$.title").value("Tenant context required"))
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.instance").value("/api/v1/policies"))
                 .andExpect(jsonPath("$.code").value("MISSING_TENANT_HEADER"))
-                .andExpect(jsonPath("$.path").value("/api/v1/policies"));
+                .andExpect(jsonPath("$.category").value("VALIDATION"))
+                .andExpect(jsonPath("$.retryable").value(false))
+                .andExpect(jsonPath("$.correlationId").isNotEmpty())
+                .andExpect(jsonPath("$.errors[0].field").value("X-EIA-Tenant"))
+                .andExpect(jsonPath("$.errors[0].code").value("MISSING_TENANT_HEADER"));
 
         verifyNoInteractions(client);
     }
 
     @Test
-    void rejectsMalformedTenantHeader() throws Exception {
+    void rejectsMalformedTenantHeaderAsProblem() throws Exception {
         mvc.perform(get("/api/v1/policies").header("X-EIA-Tenant", "not-a-uuid"))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("INVALID_TENANT_HEADER"));
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.code").value("INVALID_TENANT_HEADER"))
+                .andExpect(jsonPath("$.detail").value("The X-EIA-Tenant header must be a UUID."))
+                .andExpect(jsonPath("$.errors[0].field").value("X-EIA-Tenant"));
 
         verifyNoInteractions(client);
     }
 
     @Test
-    void listsPolicies() throws Exception {
-        when(client.findAll(TENANT)).thenReturn(List.of(policy("DRAFT", 0)));
+    void listsPoliciesWithDefaultPageEnvelope() throws Exception {
+        when(client.findAll(TENANT, 0, 20))
+                .thenReturn(new ExpertPolicyPage(List.of(policy("DRAFT", 0)), 0, 20, 1));
 
         mvc.perform(get("/api/v1/policies").header("X-EIA-Tenant", TENANT.toString()))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].policyNumber").value("POL-2026-0000001"))
-                .andExpect(jsonPath("$[0].status").value("DRAFT"));
+                .andExpect(jsonPath("$.items[0].policyNumber").value("POL-2026-0000001"))
+                .andExpect(jsonPath("$.items[0].status").value("DRAFT"))
+                .andExpect(jsonPath("$.page").value(0))
+                .andExpect(jsonPath("$.size").value(20))
+                .andExpect(jsonPath("$.total").value(1))
+                .andExpect(jsonPath("$._links.self.href").value("/api/v1/policies?page=0&size=20"))
+                .andExpect(jsonPath("$._links.next").doesNotExist())
+                .andExpect(jsonPath("$._links.prev").doesNotExist());
     }
 
     @Test
-    void returnsStructuredNotFound() throws Exception {
+    void paginationLinksAtInteriorBoundary() throws Exception {
+        when(client.findAll(TENANT, 1, 20))
+                .thenReturn(new ExpertPolicyPage(List.of(policy("DRAFT", 0)), 1, 20, 41));
+
+        mvc.perform(get("/api/v1/policies")
+                        .header("X-EIA-Tenant", TENANT.toString())
+                        .param("page", "1")
+                        .param("size", "20"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$._links.self.href").value("/api/v1/policies?page=1&size=20"))
+                .andExpect(jsonPath("$._links.next.href").value("/api/v1/policies?page=2&size=20"))
+                .andExpect(jsonPath("$._links.prev.href").value("/api/v1/policies?page=0&size=20"));
+    }
+
+    @Test
+    void lastPageHasPreviousButNoNextLink() throws Exception {
+        when(client.findAll(TENANT, 2, 20))
+                .thenReturn(new ExpertPolicyPage(List.of(policy("DRAFT", 0)), 2, 20, 41));
+
+        mvc.perform(get("/api/v1/policies")
+                        .header("X-EIA-Tenant", TENANT.toString())
+                        .param("page", "2")
+                        .param("size", "20"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$._links.prev.href").value("/api/v1/policies?page=1&size=20"))
+                .andExpect(jsonPath("$._links.next").doesNotExist());
+    }
+
+    @Test
+    void rejectsSizeAboveMaximum() throws Exception {
+        mvc.perform(get("/api/v1/policies")
+                        .header("X-EIA-Tenant", TENANT.toString())
+                        .param("size", "101"))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.errors[0].field").value("size"))
+                .andExpect(jsonPath("$.errors[0].code").value("OUT_OF_RANGE"));
+
+        verifyNoInteractions(client);
+    }
+
+    @Test
+    void rejectsNegativePage() throws Exception {
+        mvc.perform(get("/api/v1/policies")
+                        .header("X-EIA-Tenant", TENANT.toString())
+                        .param("page", "-1"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.errors[0].field").value("page"));
+
+        verifyNoInteractions(client);
+    }
+
+    @Test
+    void returnsStructuredNotFoundProblem() throws Exception {
         when(client.findById(TENANT, POLICY_ID))
                 .thenThrow(new ApiException(HttpStatus.NOT_FOUND, "POLICY_NOT_FOUND",
                         "Policy not found: " + POLICY_ID));
 
-        mvc.perform(get("/api/v1/policies/{id}", POLICY_ID).header("X-EIA-Tenant", TENANT.toString()))
+        mvc.perform(get("/api/v1/policies/{id}", POLICY_ID)
+                        .header("X-EIA-Tenant", TENANT.toString()))
                 .andExpect(status().isNotFound())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
                 .andExpect(jsonPath("$.status").value(404))
-                .andExpect(jsonPath("$.code").value("POLICY_NOT_FOUND"));
+                .andExpect(jsonPath("$.code").value("POLICY_NOT_FOUND"))
+                .andExpect(jsonPath("$.category").value("NOT_FOUND"))
+                .andExpect(jsonPath("$.title").value("Policy not found"))
+                .andExpect(jsonPath("$.instance").value("/api/v1/policies/" + POLICY_ID));
     }
 
     @Test
-    void rejectsExpirationBeforeEffectiveDate() throws Exception {
+    void returnsEtagDerivedFromVersionOnGet() throws Exception {
+        when(client.findById(TENANT, POLICY_ID)).thenReturn(policy("DRAFT", 3));
+
+        mvc.perform(get("/api/v1/policies/{id}", POLICY_ID)
+                        .header("X-EIA-Tenant", TENANT.toString()))
+                .andExpect(status().isOk())
+                .andExpect(header().string("ETag", "\"3\""))
+                .andExpect(jsonPath("$.version").value(3));
+    }
+
+    @Test
+    void rejectsStaleIfMatchWithCanonicalConflict() throws Exception {
+        when(client.findById(TENANT, POLICY_ID)).thenReturn(policy("DRAFT", 2));
+
+        mvc.perform(patch("/api/v1/policies/{id}/status", POLICY_ID)
+                        .header("X-EIA-Tenant", TENANT.toString())
+                        .header("If-Match", "\"1\"")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"status":"QUOTED","expectedVersion":0}
+                                """))
+                .andExpect(status().isConflict())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.code").value("CONCURRENT_MODIFICATION"))
+                .andExpect(jsonPath("$.category").value("CONFLICT"))
+                .andExpect(jsonPath("$.meta.currentVersion").value(2))
+                .andExpect(jsonPath("$.meta.expectedVersion").value(1))
+                .andExpect(jsonPath("$.errors[0].field").value("If-Match"))
+                .andExpect(jsonPath("$.errors[0].code").value("STALE_VERSION"));
+
+        verify(client, never()).updateStatus(any(), any(), any(), anyInt(), any(), any());
+    }
+
+    @Test
+    void ifMatchTakesPrecedenceOverExpectedVersion() throws Exception {
+        when(client.findById(TENANT, POLICY_ID)).thenReturn(policy("DRAFT", 1));
+        when(client.updateStatus(TENANT, POLICY_ID, "QUOTED", 1, "quote issued", "\"1\""))
+                .thenReturn(policy("QUOTED", 2));
+
+        mvc.perform(patch("/api/v1/policies/{id}/status", POLICY_ID)
+                        .header("X-EIA-Tenant", TENANT.toString())
+                        .header("If-Match", "\"1\"")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"status":"QUOTED","expectedVersion":0,"reason":"quote issued"}
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(header().string("ETag", "\"2\""))
+                .andExpect(jsonPath("$.status").value("QUOTED"))
+                .andExpect(jsonPath("$.version").value(2));
+
+        verify(client).updateStatus(TENANT, POLICY_ID, "QUOTED", 1, "quote issued", "\"1\"");
+    }
+
+    @Test
+    void rejectsMalformedIfMatch() throws Exception {
+        mvc.perform(patch("/api/v1/policies/{id}/status", POLICY_ID)
+                        .header("X-EIA-Tenant", TENANT.toString())
+                        .header("If-Match", "not-a-version")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"status":"QUOTED"}
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.code").value("INVALID_IF_MATCH"))
+                .andExpect(jsonPath("$.errors[0].field").value("If-Match"));
+
+        verifyNoInteractions(client);
+    }
+
+    @Test
+    void rejectsStaleExpectedVersionWithoutIfMatch() throws Exception {
+        when(client.findById(TENANT, POLICY_ID)).thenReturn(policy("DRAFT", 2));
+
+        mvc.perform(patch("/api/v1/policies/{id}/status", POLICY_ID)
+                        .header("X-EIA-Tenant", TENANT.toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"status":"QUOTED","expectedVersion":0}
+                                """))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("CONCURRENT_MODIFICATION"))
+                .andExpect(jsonPath("$.errors[0].field").value("expectedVersion"));
+    }
+
+    @Test
+    void rejectsIllegalStatusTransitionAsConflict() throws Exception {
+        when(client.findById(TENANT, POLICY_ID)).thenReturn(policy("DRAFT", 0));
+
+        mvc.perform(patch("/api/v1/policies/{id}/status", POLICY_ID)
+                        .header("X-EIA-Tenant", TENANT.toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"status":"ISSUED","expectedVersion":0}
+                                """))
+                .andExpect(status().isConflict())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.code").value("INVALID_STATUS_TRANSITION"))
+                .andExpect(jsonPath("$.category").value("CONFLICT"))
+                .andExpect(jsonPath("$.errors[0].field").value("status"));
+
+        verify(client, never()).updateStatus(any(), any(), any(), anyInt(), any(), any());
+    }
+
+    @Test
+    void createsPolicyAndForwardsIdempotencyKey() throws Exception {
+        when(client.create(eq(TENANT), any(CreatePolicyCommand.class), eq("idem-1")))
+                .thenReturn(new CreateOutcome(policy("DRAFT", 0), false));
+
+        mvc.perform(post("/api/v1/policies")
+                        .header("X-EIA-Tenant", TENANT.toString())
+                        .header("Idempotency-Key", "idem-1")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(command(EFFECTIVE, EXPIRATION,
+                                new BigDecimal("125000.00"), new BigDecimal("2000000.00")))))
+                .andExpect(status().isCreated())
+                .andExpect(header().string("ETag", "\"0\""))
+                .andExpect(header().string("Idempotent-Replayed", "false"))
+                .andExpect(jsonPath("$.policyNumber").value("POL-2026-0000001"));
+
+        verify(client).create(eq(TENANT), any(CreatePolicyCommand.class), eq("idem-1"));
+    }
+
+    @Test
+    void replaysIdempotentCreateWithOkStatus() throws Exception {
+        when(client.create(eq(TENANT), any(CreatePolicyCommand.class), eq("idem-1")))
+                .thenReturn(new CreateOutcome(policy("DRAFT", 0), true));
+
+        mvc.perform(post("/api/v1/policies")
+                        .header("X-EIA-Tenant", TENANT.toString())
+                        .header("Idempotency-Key", "idem-1")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(command(EFFECTIVE, EXPIRATION,
+                                new BigDecimal("125000.00"), new BigDecimal("2000000.00")))))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Idempotent-Replayed", "true"))
+                .andExpect(header().string("ETag", "\"0\""))
+                .andExpect(jsonPath("$.policyNumber").value("POL-2026-0000001"));
+    }
+
+    @Test
+    void returnsConflictForReusedIdempotencyKey() throws Exception {
+        when(client.create(eq(TENANT), any(CreatePolicyCommand.class), eq("idem-1")))
+                .thenThrow(new ApiException(HttpStatus.CONFLICT, "IDEMPOTENCY_CONFLICT",
+                        "Idempotency-Key was already used with a different request.",
+                        List.of(new ApiException.FieldIssue(
+                                "Idempotency-Key", "IDEMPOTENCY_CONFLICT", "different request")),
+                        Map.of("existingPolicyId", POLICY_ID.toString())));
+
+        mvc.perform(post("/api/v1/policies")
+                        .header("X-EIA-Tenant", TENANT.toString())
+                        .header("Idempotency-Key", "idem-1")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(command(EFFECTIVE, EXPIRATION,
+                                new BigDecimal("125000.00"), new BigDecimal("2000000.00")))))
+                .andExpect(status().isConflict())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.code").value("IDEMPOTENCY_CONFLICT"))
+                .andExpect(jsonPath("$.category").value("CONFLICT"))
+                .andExpect(jsonPath("$.meta.existingPolicyId").value(POLICY_ID.toString()))
+                .andExpect(jsonPath("$.errors[0].field").value("Idempotency-Key"));
+    }
+
+    @Test
+    void rejectsOverlongIdempotencyKey() throws Exception {
+        String key = "k".repeat(256);
+
+        mvc.perform(post("/api/v1/policies")
+                        .header("X-EIA-Tenant", TENANT.toString())
+                        .header("Idempotency-Key", key)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(command(EFFECTIVE, EXPIRATION,
+                                new BigDecimal("125000.00"), new BigDecimal("2000000.00")))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("INVALID_IDEMPOTENCY_KEY"));
+
+        verifyNoInteractions(client);
+    }
+
+    @Test
+    void mapsExpertUnavailableToDependencyProblem() throws Exception {
+        when(client.findAll(TENANT, 0, 20)).thenThrow(new ApiException(
+                HttpStatus.SERVICE_UNAVAILABLE, "EXPERT_UNAVAILABLE",
+                "The Policy expert is unavailable; retry later."));
+
+        mvc.perform(get("/api/v1/policies").header("X-EIA-Tenant", TENANT.toString()))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.code").value("EXPERT_UNAVAILABLE"))
+                .andExpect(jsonPath("$.category").value("DEPENDENCY"))
+                .andExpect(jsonPath("$.retryable").value(true));
+    }
+
+    @Test
+    void unexpectedErrorIsInternalProblemWithoutLeakingDetails() throws Exception {
+        when(client.findAll(TENANT, 0, 20)).thenThrow(new IllegalStateException("database password leaked"));
+
+        mvc.perform(get("/api/v1/policies").header("X-EIA-Tenant", TENANT.toString()))
+                .andExpect(status().isInternalServerError())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.code").value("INTERNAL_ERROR"))
+                .andExpect(jsonPath("$.category").value("INTERNAL"))
+                .andExpect(jsonPath("$.detail").value(
+                        "The Policy domain service could not complete the request."))
+                .andExpect(jsonPath("$.detail").value(org.hamcrest.Matchers.not(
+                        org.hamcrest.Matchers.containsString("database password"))));
+    }
+
+    @Test
+    void rejectsExpirationBeforeEffectiveDateWithFieldErrors() throws Exception {
         CreatePolicyCommand command = command(EFFECTIVE.plusDays(2), EFFECTIVE,
                 new BigDecimal("1000.00"), new BigDecimal("1000000.00"));
 
@@ -99,14 +392,17 @@ class PolicyControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(command)))
                 .andExpect(status().isBadRequest())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
                 .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
-                .andExpect(jsonPath("$.details[0].field").value("expirationDate"));
+                .andExpect(jsonPath("$.errors[0].field").value("expirationDate"))
+                .andExpect(jsonPath("$.errors[0].code").value("INVALID_DATE_RANGE"))
+                .andExpect(jsonPath("$.details").doesNotExist());
 
         verifyNoInteractions(client);
     }
 
     @Test
-    void rejectsNegativeLimit() throws Exception {
+    void rejectsNegativeLimitWithFieldErrors() throws Exception {
         CreatePolicyCommand command = command(EFFECTIVE, EXPIRATION,
                 new BigDecimal("1000.00"), new BigDecimal("-0.01"));
 
@@ -116,60 +412,10 @@ class PolicyControllerTest {
                         .content(objectMapper.writeValueAsString(command)))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
-                .andExpect(jsonPath("$.details[0].field").value("limitAmount"));
+                .andExpect(jsonPath("$.errors[0].field").value("limitAmount"))
+                .andExpect(jsonPath("$.errors[0].code").value("MIN_VALUE"));
 
         verifyNoInteractions(client);
-    }
-
-    @Test
-    void createsPolicyThroughExpert() throws Exception {
-        when(client.create(eq(TENANT), any(CreatePolicyCommand.class))).thenReturn(policy("DRAFT", 0));
-
-        mvc.perform(post("/api/v1/policies")
-                        .header("X-EIA-Tenant", TENANT.toString())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(command(EFFECTIVE, EXPIRATION,
-                                new BigDecimal("125000.00"), new BigDecimal("2000000.00")))))
-                .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.policyNumber").value("POL-2026-0000001"))
-                .andExpect(jsonPath("$.status").value("DRAFT"));
-
-        verify(client).create(eq(TENANT), any(CreatePolicyCommand.class));
-    }
-
-    @Test
-    void rejectsIllegalStatusTransitionBeforeCallingExpert() throws Exception {
-        when(client.findById(TENANT, POLICY_ID)).thenReturn(policy("DRAFT", 0));
-
-        mvc.perform(patch("/api/v1/policies/{id}/status", POLICY_ID)
-                        .header("X-EIA-Tenant", TENANT.toString())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {"status":"ISSUED","expectedVersion":0}
-                                """))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("INVALID_STATUS_TRANSITION"));
-
-        verify(client, never()).updateStatus(any(), any(), any(), anyInt(), any());
-    }
-
-    @Test
-    void advancesStatusThroughExpert() throws Exception {
-        when(client.findById(TENANT, POLICY_ID)).thenReturn(policy("DRAFT", 0));
-        when(client.updateStatus(TENANT, POLICY_ID, "QUOTED", 0, "quote issued"))
-                .thenReturn(policy("QUOTED", 1));
-
-        mvc.perform(patch("/api/v1/policies/{id}/status", POLICY_ID)
-                        .header("X-EIA-Tenant", TENANT.toString())
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {"status":"QUOTED","expectedVersion":0,"reason":"quote issued"}
-                                """))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("QUOTED"))
-                .andExpect(jsonPath("$.version").value(1));
-
-        verify(client).updateStatus(TENANT, POLICY_ID, "QUOTED", 0, "quote issued");
     }
 
     private static CreatePolicyCommand command(LocalDate effective, LocalDate expiration,

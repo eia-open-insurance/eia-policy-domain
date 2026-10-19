@@ -1,0 +1,43 @@
+package com.eia.policy.domain;
+
+import org.springframework.web.util.UriComponentsBuilder;
+
+import java.util.LinkedHashMap;
+import java.util.Map;
+
+/**
+ * Builds the {@code _links} object for a page envelope. Links are relative so
+ * they keep working behind the gateway and in local development.
+ */
+final class PageLinks {
+    private PageLinks() {
+    }
+
+    static PolicyPage.Links build(String basePath, Map<String, String> filters,
+                                  int page, int size, long total) {
+        PolicyPage.Link self = new PolicyPage.Link(href(basePath, filters, page, size));
+        PolicyPage.Link next = (long) (page + 1) * size < total
+                ? new PolicyPage.Link(href(basePath, filters, page + 1, size))
+                : null;
+        PolicyPage.Link prev = page > 0 && (long) page * size <= total
+                ? new PolicyPage.Link(href(basePath, filters, page - 1, size))
+                : null;
+        return new PolicyPage.Links(self, next, prev);
+    }
+
+    static String href(String basePath, Map<String, String> filters, int page, int size) {
+        UriComponentsBuilder builder = UriComponentsBuilder.fromPath(basePath);
+        filters.forEach(builder::queryParam);
+        builder.queryParam("page", page);
+        builder.queryParam("size", size);
+        return builder.build().toUriString();
+    }
+
+    static Map<String, String> filters(String name, String value) {
+        Map<String, String> filters = new LinkedHashMap<>();
+        if (name != null && value != null) {
+            filters.put(name, value);
+        }
+        return filters;
+    }
+}

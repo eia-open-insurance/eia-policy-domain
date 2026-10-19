@@ -41,13 +41,16 @@ class PolicyLifecycleTest {
     }
 
     @Test
-    void rejectsSkippedTransitions() {
+    void rejectsSkippedTransitionsAsConflict() {
         assertThatThrownBy(() -> PolicyLifecycle.validateTransition("DRAFT", "ISSUED"))
                 .isInstanceOf(ApiException.class)
                 .satisfies(ex -> {
                     ApiException api = (ApiException) ex;
-                    assertThat(api.status()).isEqualTo(HttpStatus.BAD_REQUEST);
+                    assertThat(api.status()).isEqualTo(HttpStatus.CONFLICT);
                     assertThat(api.code()).isEqualTo("INVALID_STATUS_TRANSITION");
+                    assertThat(api.details()).anyMatch(issue ->
+                            issue.field().equals("status")
+                                    && issue.code().equals("INVALID_STATUS_TRANSITION"));
                 });
     }
 
