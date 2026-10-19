@@ -11,7 +11,7 @@
 
 ## Purpose
 
-Policy business rules, transaction catalog, orchestration, approvals, and APIs. Primary policy lifecycle, coverage, limits, billing, underwriting, rating, and capacity.
+Policy business rules, transaction catalog, orchestration, approvals, and APIs. Direct policy lifecycle, coverage, limits, billing, underwriting, rating, and capacity.
 
 ## Responsibilities
 
