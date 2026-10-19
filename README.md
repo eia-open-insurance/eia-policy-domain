@@ -17,6 +17,38 @@ Policy business rules, transaction catalog, orchestration, approvals, and APIs. 
 
 The domain API validates tenant scope, policy dates, non-negative premium and limit, and the SPEC status lifecycle before delegating persistence to the Policy expert through `RestClient`.
 
+The second slice proxies the policy contract surface and keeps the public
+conventions on every new route: page envelopes for collections, strong ETags on
+mutations, optional `If-Match`, and optional `Idempotency-Key` with
+`Idempotent-Replayed`. Business rules stay in the expert so both services
+enforce one rule set.
+
+### Second-slice endpoints
+
+All additive under `/api/v1/policies/{policyId}`:
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/versions` | Version history |
+| `GET` | `/versions/current` | Derived current version with `hashVerified` |
+| `GET` | `/versions/{versionId}` | One version snapshot |
+| `GET`/`POST` | `/coverages` | Coverage list / add coverage with limit schedule |
+| `GET` | `/limits` | Limit schedules |
+| `GET` | `/aggregate-state` | Erosion state per limit |
+| `POST` | `/erosion` | Apply an idempotent erosion fact |
+| `GET`/`POST` | `/endorsements` | Endorsement list / endorse |
+| `GET` | `/endorsements/{endorsementId}` | One endorsement |
+| `GET`/`POST` | `/insureds` | Insured list / add insured |
+| `GET`/`POST` | `/locations` | Location list / add location |
+| `GET` | `/cancellations` | Cancellation history |
+| `POST` | `/cancel` | Cancel with computed return premium |
+| `GET` | `/reinstatements` | Reinstatement history |
+| `POST` | `/reinstate` | Reinstate with approval and premium evidence |
+
+The expert status, code, `category`, field errors, and `meta` are preserved, so
+`422 BUSINESS_RULE`, `428 APPROVAL_REQUIRED`, and `409` conflicts reach the
+caller unchanged.
+
 ## Cross-cutting API behavior
 
 The Policy domain is the reference implementation for the SPEC 6.11 / 12.2 API
@@ -56,6 +88,11 @@ The service listens on port 8084. Every request requires `X-EIA-Tenant`.
 - `GET /api/v1/policies/{id}`
 - `POST /api/v1/policies` (`Idempotency-Key` optional)
 - `PATCH /api/v1/policies/{id}/status` (`If-Match` optional, takes precedence)
+- `GET /api/v1/policies/{id}/versions`, `/versions/current`, `/coverages`,
+  `/limits`, `/aggregate-state`, `/endorsements`, `/insureds`, `/locations`,
+  `/cancellations`, `/reinstatements`
+- `POST /api/v1/policies/{id}/coverages`, `/erosion`, `/endorsements`,
+  `/insureds`, `/locations`, `/cancel`, `/reinstate`
 
 The expert base URL is configured with `eia.policy.expert-url` and defaults to `http://localhost:8083`.
 

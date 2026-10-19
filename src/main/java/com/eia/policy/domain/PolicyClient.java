@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -129,6 +130,226 @@ public class PolicyClient {
                     "Policy expert returned an empty response");
         }
         return policy;
+    }
+
+    // ------------------------------------------------------------------
+    // Second-slice policy contract: versions, coverage/limits, endorsements,
+    // insureds/locations, cancellation/reinstatement.
+    // ------------------------------------------------------------------
+
+    public ExpertItemPage<PolicyVersionDto> findVersions(UUID tenantId, UUID policyId,
+                                                         int page, int size) {
+        return list("list policy versions", "/internal/v1/policies/{id}/versions", tenantId,
+                policyId, page, size,
+                new ParameterizedTypeReference<ExpertItemPage<PolicyVersionDto>>() {
+                });
+    }
+
+    public CurrentVersionDto findCurrentVersion(UUID tenantId, UUID policyId) {
+        CurrentVersionDto current = call("get current policy version", () -> client.get()
+                .uri(uri -> uri.path("/internal/v1/policies/{id}/versions/current")
+                        .queryParam("tenantId", tenantId)
+                        .build(policyId))
+                .retrieve()
+                .body(CurrentVersionDto.class));
+        if (current == null) {
+            throw new ApiException(HttpStatus.BAD_GATEWAY, "EXPERT_BAD_RESPONSE",
+                    "Policy expert returned an empty response");
+        }
+        return current;
+    }
+
+    public PolicyVersionDto findVersion(UUID tenantId, UUID policyId, UUID versionId) {
+        PolicyVersionDto version = call("get policy version", () -> client.get()
+                .uri(uri -> uri.path("/internal/v1/policies/{id}/versions/{versionId}")
+                        .queryParam("tenantId", tenantId)
+                        .build(policyId, versionId))
+                .retrieve()
+                .body(PolicyVersionDto.class));
+        if (version == null) {
+            throw new ApiException(HttpStatus.BAD_GATEWAY, "EXPERT_BAD_RESPONSE",
+                    "Policy expert returned an empty response");
+        }
+        return version;
+    }
+
+    public ExpertItemPage<CoverageViewDto> findCoverages(UUID tenantId, UUID policyId,
+                                                         int page, int size) {
+        return list("list coverages", "/internal/v1/policies/{id}/coverages", tenantId, policyId,
+                page, size, new ParameterizedTypeReference<ExpertItemPage<CoverageViewDto>>() {
+                });
+    }
+
+    public Mutation<CoverageViewDto> createCoverage(UUID tenantId, UUID policyId,
+                                                    CreateCoverageCommand command,
+                                                    String ifMatch, String idempotencyKey) {
+        return mutate("create coverage", "/internal/v1/policies/{id}/coverages", tenantId,
+                policyId, command, ifMatch, idempotencyKey, CoverageViewDto.class);
+    }
+
+    public ExpertItemPage<LimitDto> findLimits(UUID tenantId, UUID policyId, int page, int size) {
+        return list("list limits", "/internal/v1/policies/{id}/limits", tenantId, policyId, page,
+                size, new ParameterizedTypeReference<ExpertItemPage<LimitDto>>() {
+                });
+    }
+
+    public ExpertItemPage<LimitStateDto> findAggregateState(UUID tenantId, UUID policyId,
+                                                            int page, int size) {
+        return list("list aggregate state", "/internal/v1/policies/{id}/aggregate-state", tenantId,
+                policyId, page, size,
+                new ParameterizedTypeReference<ExpertItemPage<LimitStateDto>>() {
+                });
+    }
+
+    public Mutation<LimitStateDto> applyErosion(UUID tenantId, UUID policyId, ErosionCommand command,
+                                                String idempotencyKey) {
+        return mutate("apply erosion", "/internal/v1/policies/{id}/erosion", tenantId, policyId,
+                command, null, idempotencyKey, LimitStateDto.class);
+    }
+
+    public ExpertItemPage<EndorsementDto> findEndorsements(UUID tenantId, UUID policyId,
+                                                           int page, int size) {
+        return list("list endorsements", "/internal/v1/policies/{id}/endorsements", tenantId,
+                policyId, page, size,
+                new ParameterizedTypeReference<ExpertItemPage<EndorsementDto>>() {
+                });
+    }
+
+    public EndorsementDto findEndorsement(UUID tenantId, UUID policyId, UUID endorsementId) {
+        EndorsementDto endorsement = call("get endorsement", () -> client.get()
+                .uri(uri -> uri.path("/internal/v1/policies/{id}/endorsements/{endorsementId}")
+                        .queryParam("tenantId", tenantId)
+                        .build(policyId, endorsementId))
+                .retrieve()
+                .body(EndorsementDto.class));
+        if (endorsement == null) {
+            throw new ApiException(HttpStatus.BAD_GATEWAY, "EXPERT_BAD_RESPONSE",
+                    "Policy expert returned an empty response");
+        }
+        return endorsement;
+    }
+
+    public Mutation<EndorsementDto> createEndorsement(UUID tenantId, UUID policyId,
+                                                      CreateEndorsementCommand command,
+                                                      String ifMatch, String idempotencyKey) {
+        return mutate("create endorsement", "/internal/v1/policies/{id}/endorsements", tenantId,
+                policyId, command, ifMatch, idempotencyKey, EndorsementDto.class);
+    }
+
+    public ExpertItemPage<InsuredDto> findInsureds(UUID tenantId, UUID policyId,
+                                                   int page, int size) {
+        return list("list insureds", "/internal/v1/policies/{id}/insureds", tenantId, policyId,
+                page, size, new ParameterizedTypeReference<ExpertItemPage<InsuredDto>>() {
+                });
+    }
+
+    public Mutation<InsuredDto> createInsured(UUID tenantId, UUID policyId,
+                                              CreateInsuredCommand command, String ifMatch,
+                                              String idempotencyKey) {
+        return mutate("create insured", "/internal/v1/policies/{id}/insureds", tenantId, policyId,
+                command, ifMatch, idempotencyKey, InsuredDto.class);
+    }
+
+    public ExpertItemPage<LocationDto> findLocations(UUID tenantId, UUID policyId,
+                                                     int page, int size) {
+        return list("list locations", "/internal/v1/policies/{id}/locations", tenantId, policyId,
+                page, size, new ParameterizedTypeReference<ExpertItemPage<LocationDto>>() {
+                });
+    }
+
+    public Mutation<LocationDto> createLocation(UUID tenantId, UUID policyId,
+                                                CreateLocationCommand command, String ifMatch,
+                                                String idempotencyKey) {
+        return mutate("create location", "/internal/v1/policies/{id}/locations", tenantId, policyId,
+                command, ifMatch, idempotencyKey, LocationDto.class);
+    }
+
+    public ExpertItemPage<CancellationDto> findCancellations(UUID tenantId, UUID policyId,
+                                                             int page, int size) {
+        return list("list cancellations", "/internal/v1/policies/{id}/cancellations", tenantId,
+                policyId, page, size,
+                new ParameterizedTypeReference<ExpertItemPage<CancellationDto>>() {
+                });
+    }
+
+    public Mutation<CancellationDto> cancelPolicy(UUID tenantId, UUID policyId,
+                                                  CancelPolicyCommand command, String ifMatch,
+                                                  String idempotencyKey) {
+        return mutate("cancel policy", "/internal/v1/policies/{id}/cancel", tenantId, policyId,
+                command, ifMatch, idempotencyKey, CancellationDto.class);
+    }
+
+    public ExpertItemPage<ReinstatementDto> findReinstatements(UUID tenantId, UUID policyId,
+                                                               int page, int size) {
+        return list("list reinstatements", "/internal/v1/policies/{id}/reinstatements", tenantId,
+                policyId, page, size,
+                new ParameterizedTypeReference<ExpertItemPage<ReinstatementDto>>() {
+                });
+    }
+
+    public Mutation<ReinstatementDto> reinstatePolicy(UUID tenantId, UUID policyId,
+                                                      ReinstatePolicyCommand command,
+                                                      String ifMatch, String idempotencyKey) {
+        return mutate("reinstate policy", "/internal/v1/policies/{id}/reinstate", tenantId,
+                policyId, command, ifMatch, idempotencyKey, ReinstatementDto.class);
+    }
+
+    private <T> ExpertItemPage<T> list(String operation, String path, UUID tenantId, UUID policyId,
+                                       int page, int size,
+                                       ParameterizedTypeReference<ExpertItemPage<T>> type) {
+        ExpertItemPage<T> result = call(operation, () -> client.get()
+                .uri(uri -> uri.path(path)
+                        .queryParam("tenantId", tenantId)
+                        .queryParam("page", page)
+                        .queryParam("size", size)
+                        .build(policyId))
+                .retrieve()
+                .body(type));
+        if (result == null) {
+            throw new ApiException(HttpStatus.BAD_GATEWAY, "EXPERT_BAD_RESPONSE",
+                    "Policy expert returned an empty response");
+        }
+        return result;
+    }
+
+    private <T> Mutation<T> mutate(String operation, String path, UUID tenantId, UUID policyId,
+                                   Object body, String ifMatch, String idempotencyKey,
+                                   Class<T> type) {
+        ResponseEntity<T> response = callEntity(operation, () -> {
+            RestClient.RequestBodySpec spec = client.post()
+                    .uri(uri -> uri.path(path)
+                            .queryParam("tenantId", tenantId)
+                            .build(policyId));
+            if (ifMatch != null && !ifMatch.isBlank()) {
+                spec = spec.header(HttpHeaders.IF_MATCH, ifMatch);
+            }
+            if (idempotencyKey != null && !idempotencyKey.isBlank()) {
+                spec = spec.header("Idempotency-Key", idempotencyKey);
+            }
+            return spec.body(body).retrieve().toEntity(type);
+        });
+        if (response.getBody() == null) {
+            throw new ApiException(HttpStatus.BAD_GATEWAY, "EXPERT_BAD_RESPONSE",
+                    "Policy expert returned an empty response");
+        }
+        return Mutation.of(response);
+    }
+
+    private <T> ResponseEntity<T> callEntity(String operation,
+                                             Supplier<ResponseEntity<T>> invocation) {
+        try {
+            return invocation.get();
+        } catch (RestClientResponseException ex) {
+            throw translate(operation, ex);
+        } catch (ResourceAccessException ex) {
+            LOG.warn("Policy expert is unreachable during {}", operation, ex);
+            throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "EXPERT_UNAVAILABLE",
+                    "The Policy expert is unavailable; retry later.");
+        } catch (RestClientException ex) {
+            LOG.warn("Policy expert call failed during {}", operation, ex);
+            throw new ApiException(HttpStatus.BAD_GATEWAY, "EXPERT_ERROR",
+                    "The Policy expert could not complete the request.");
+        }
     }
 
     private static boolean isReplayed(ResponseEntity<?> response) {
