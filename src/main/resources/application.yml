@@ -1,0 +1,13 @@
+server:
+  port: 8084
+spring:
+  application:
+    name: eia-policy-domain
+eia:
+  policy:
+    expert-url: http://localhost:8083
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
