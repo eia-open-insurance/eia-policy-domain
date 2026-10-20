@@ -138,6 +138,27 @@ non-DIRECT book with `404 BOOK_SCOPE_VIOLATION`. Expert `400`, `404`, and `409`
 problems reach the caller unchanged; a policy without a profile is
 `404 MASS_TORT_PROFILE_NOT_FOUND`.
 
+### Programs
+
+`POST /api/v1/programs` creates a program from `{name, programType,
+effectiveFrom, effectiveTo, leadPolicyId?}` and returns `201` with the flat
+projection `{programId, programNumber, name, programType, effectiveFrom,
+effectiveTo, status, leadPolicyId, createdAt}`. The program number and status
+are server-owned. `GET /api/v1/programs` returns the tenant's programs as an
+array ordered newest first, and `GET /api/v1/programs/{programId}` returns one
+program. `PATCH /api/v1/policies/{policyId}/program` accepts `{programId}` and
+returns the updated `PolicyDto`; a null or absent `programId` clears the
+policy's program. The `PolicyDto` projection now exposes `programId` on policy
+reads and writes.
+
+The Policy expert owns program numbering, the program-type and status
+vocabularies, tenant-scoped uniqueness, the effective-date rules, and the
+policy membership and lead-policy rules. The domain validates the request
+shape and the effective-date ordering, forwards `X-EIA-Tenant` and
+`X-EIA-Book: DIRECT` on every call, and rejects a supplied non-DIRECT book with
+`404 BOOK_SCOPE_VIOLATION`. Expert `400`, `404`, and `409` problems reach the
+caller unchanged; a missing program is `404 PROGRAM_NOT_FOUND`.
+
 ### Filtering the policy list by insured party
 
 `GET /api/v1/policies?insuredPartyId={partyId}&page=0&size=5` filters the
@@ -202,6 +223,8 @@ The service listens on port 8084. Every request requires `X-EIA-Tenant`.
   `/limits`, `/aggregate-state`, `/endorsements`, `/insureds`, `/locations`,
   `/cancellations`, `/reinstatements`
 - `GET`/`PUT /api/v1/policies/{id}/mass-tort-profile`
+- `POST`/`GET /api/v1/programs`, `GET /api/v1/programs/{programId}`
+- `PATCH /api/v1/policies/{policyId}/program`
 - `POST /api/v1/policies/{id}/coverages`, `/erosion`, `/endorsements`,
   `/insureds`, `/locations`, `/cancel`, `/reinstate`, `/renew`, `/billing`
 - `PATCH /api/v1/policies/{id}/billing/installments/{installmentId}`

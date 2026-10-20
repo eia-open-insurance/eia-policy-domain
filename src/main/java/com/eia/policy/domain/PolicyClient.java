@@ -408,6 +408,92 @@ public class PolicyClient {
     }
 
     // ------------------------------------------------------------------
+    // Program catalog and policy program membership (SPEC 10.11.3,
+    // 11.2.16). The expert owns program numbering, the type/status
+    // vocabularies, tenant-scoped uniqueness, and the membership rules;
+    // the domain forwards the tenant and DIRECT book context on every
+    // call.
+    // ------------------------------------------------------------------
+
+    public List<ProgramDto> findPrograms(UUID tenantId) {
+        List<ExpertProgram> programs = call("list programs", () -> client.get()
+                .uri(uri -> uri.path("/internal/v1/programs")
+                        .queryParam("tenantId", tenantId)
+                        .build())
+                .header(TENANT_HEADER, tenantId.toString())
+                .header(BookScope.BOOK_HEADER, BookScope.DIRECT)
+                .retrieve()
+                .body(new ParameterizedTypeReference<List<ExpertProgram>>() {
+                }));
+        if (programs == null) {
+            throw new ApiException(HttpStatus.BAD_GATEWAY, "EXPERT_BAD_RESPONSE",
+                    "Policy expert returned an empty response");
+        }
+        return programs.stream()
+                .filter(Objects::nonNull)
+                .map(PolicyClient::toProgram)
+                .toList();
+    }
+
+    public ProgramDto findProgram(UUID tenantId, UUID programId) {
+        ExpertProgram program = call("get program", () -> client.get()
+                .uri(uri -> uri.path("/internal/v1/programs/{programId}")
+                        .queryParam("tenantId", tenantId)
+                        .build(programId))
+                .header(TENANT_HEADER, tenantId.toString())
+                .header(BookScope.BOOK_HEADER, BookScope.DIRECT)
+                .retrieve()
+                .body(ExpertProgram.class));
+        return toProgram(program);
+    }
+
+    public ProgramDto createProgram(UUID tenantId, CreateProgramCommand command) {
+        ExpertProgram program = call("create program", () -> client.post()
+                .uri(uri -> uri.path("/internal/v1/programs")
+                        .queryParam("tenantId", tenantId)
+                        .build())
+                .header(TENANT_HEADER, tenantId.toString())
+                .header(BookScope.BOOK_HEADER, BookScope.DIRECT)
+                .body(command)
+                .retrieve()
+                .body(ExpertProgram.class));
+        return toProgram(program);
+    }
+
+    /**
+     * Assigns the policy to a program, or clears the assignment when
+     * {@code programId} is null. The updated policy carries the new
+     * {@code programId} and the expert's aggregate ETag.
+     */
+    public Mutation<PolicyDto> updatePolicyProgram(UUID tenantId, UUID policyId,
+                                                   UUID programId) {
+        ResponseEntity<PolicyDto> response = callEntity("assign policy program", () -> client.patch()
+                .uri(uri -> uri.path("/internal/v1/policies/{policyId}/program")
+                        .queryParam("tenantId", tenantId)
+                        .build(policyId))
+                .header(TENANT_HEADER, tenantId.toString())
+                .header(BookScope.BOOK_HEADER, BookScope.DIRECT)
+                .body(new ExpertPolicyProgramRequest(programId))
+                .retrieve()
+                .toEntity(PolicyDto.class));
+        if (response.getBody() == null) {
+            throw new ApiException(HttpStatus.BAD_GATEWAY, "EXPERT_BAD_RESPONSE",
+                    "Policy expert returned an empty response");
+        }
+        return Mutation.of(response);
+    }
+
+    private static ProgramDto toProgram(ExpertProgram view) {
+        if (view == null) {
+            throw new ApiException(HttpStatus.BAD_GATEWAY, "EXPERT_BAD_RESPONSE",
+                    "Policy expert returned an empty response");
+        }
+        return new ProgramDto(view.programId(), view.programNumber(), view.name(),
+                view.programType(), view.effectiveFrom(), view.effectiveTo(), view.status(),
+                view.leadPolicyId(), view.createdAt());
+    }
+
+    // ------------------------------------------------------------------
     // Premium receivables: the cross-policy installment view that backs a
     // collections/ageing screen (SPEC 11.2.13). The expert owns the
     // projection and the tenant wall; the domain forwards the tenant and
@@ -867,6 +953,29 @@ public class PolicyClient {
             String status,
             @JsonAlias("updated_at") Instant updatedAt
     ) {
+    }
+
+    /**
+     * Wire shape of one expert program. The public projection is flat; the
+     * aliases accept the SPEC column names and the expert's {@code id}
+     * identity while the internal expert contract settles.
+     */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record ExpertProgram(
+            @JsonAlias({"id", "program_id"}) UUID programId,
+            @JsonAlias({"code", "programCode", "program_code"}) String programNumber,
+            @JsonAlias("program_name") String name,
+            @JsonAlias({"type", "program_type"}) String programType,
+            @JsonAlias({"effective_from", "startDate"}) LocalDate effectiveFrom,
+            @JsonAlias({"effective_to", "expirationDate", "endDate"}) LocalDate effectiveTo,
+            @JsonAlias("program_status") String status,
+            @JsonAlias("lead_policy_id") UUID leadPolicyId,
+            @JsonAlias("created_at") Instant createdAt
+    ) {
+    }
+
+    /** Wire shape of the policy program assignment command. */
+    record ExpertPolicyProgramRequest(UUID programId) {
     }
 
     /**

@@ -524,6 +524,6 @@ class PolicyContractControllerTest {
         return new PolicyDto(SUCCESSOR_ID, TENANT, "POL-2026-0000002", "CGL", PARTY_ID,
                 "DRAFT", LocalDate.of(2027, 1, 1), LocalDate.of(2028, 1, 1),
                 new BigDecimal("130000.0000"), "USD", new BigDecimal("2500000.0000"), "USD",
-                0, now, now, POLICY_ID);
+                0, now, now, POLICY_ID, null);
     }
 }

@@ -23,5 +23,6 @@ public record PolicyDto(
         int version,
         Instant createdAt,
         Instant updatedAt,
-        UUID renewedFromPolicyId
+        UUID renewedFromPolicyId,
+        UUID programId
 ) {}

@@ -524,6 +524,6 @@ class PolicyControllerTest {
     private static PolicyDto policy(String status, int version) {
         return new PolicyDto(POLICY_ID, TENANT, "POL-2026-0000001", "CGL", PARTY, status,
                 EFFECTIVE, EXPIRATION, new BigDecimal("125000.0000"), "USD",
-                new BigDecimal("2000000.0000"), "USD", version, CREATED, CREATED, null);
+                new BigDecimal("2000000.0000"), "USD", version, CREATED, CREATED, null, null);
     }
 }
