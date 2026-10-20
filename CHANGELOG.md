@@ -26,6 +26,11 @@ The format is based on Keep a Changelog and the project uses Semantic Versioning
   `If-Match` and `Idempotency-Key` are validated before the expert call.
 - Expert `422 BUSINESS_RULE` and `428 APPROVAL_REQUIRED` problems pass through
   unchanged.
+- `GET /api/v1/policies/search` with the shared global-search envelope
+  `{query, limit, items}`, case-insensitive contains matching, tenant scoping,
+  a 10-default / 25-capped limit, and a `/policy?record=<id>` href. The endpoint
+  requires `X-EIA-Book: DIRECT` and returns `404 BOOK_SCOPE_VIOLATION` for any
+  other book.
 
 ### Changed
 

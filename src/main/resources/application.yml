@@ -3,6 +3,15 @@ server:
 spring:
   application:
     name: eia-policy-domain
+  datasource:
+    url: ${EIA_POLICY_DB_URL:jdbc:postgresql://localhost:5432/eia_policy}
+    username: ${EIA_POLICY_DB_USERNAME:postgres}
+    password: ${EIA_POLICY_DB_PASSWORD:postgres}
+    hikari:
+      maximum-pool-size: 3
+      minimum-idle: 1
+      connection-timeout: 30000
+      initialization-fail-timeout: -1
 eia:
   policy:
     expert-url: http://localhost:8083

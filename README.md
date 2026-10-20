@@ -49,6 +49,17 @@ The expert status, code, `category`, field errors, and `meta` are preserved, so
 `422 BUSINESS_RULE`, `428 APPROVAL_REQUIRED`, and `409` conflicts reach the
 caller unchanged.
 
+### Global search
+
+`GET /api/v1/policies/search?q={term}&limit=10` returns the common shell search
+envelope `{query, limit, items}`. `q` is a case-insensitive contains over
+`policyNumber` and `productCode`; a blank `q` returns the latest records by
+`updatedAt DESC`. `limit` defaults to 10 and is capped at 25. The endpoint
+requires `X-EIA-Tenant` and `X-EIA-Book: DIRECT`; a missing book is `400
+BOOK_REQUIRED` and any other book is `404 BOOK_SCOPE_VIOLATION` before SQL
+runs. The read uses `JdbcTemplate` against the `eia_policy` data store; the
+existing routes keep proxying the Policy expert unchanged.
+
 ## Cross-cutting API behavior
 
 The Policy domain is the reference implementation for the SPEC 6.11 / 12.2 API
