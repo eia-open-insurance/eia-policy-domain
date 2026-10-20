@@ -1,5 +1,7 @@
 package com.eia.policy.domain;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -17,6 +19,7 @@ import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
@@ -32,6 +35,7 @@ import java.util.function.Supplier;
 @Component
 public class PolicyClient {
     private static final Logger LOG = LoggerFactory.getLogger(PolicyClient.class);
+    private static final String TENANT_HEADER = "X-EIA-Tenant";
 
     private final RestClient client;
     private final ObjectMapper objectMapper;
@@ -294,6 +298,80 @@ public class PolicyClient {
                 policyId, command, ifMatch, idempotencyKey, ReinstatementDto.class);
     }
 
+    // ------------------------------------------------------------------
+    // Billing plan and installment schedule. The expert owns billing
+    // (SPEC 11.2.13); the domain forwards the tenant and DIRECT book
+    // context on every call.
+    // ------------------------------------------------------------------
+
+    public BillingPlan findBillingPlan(UUID tenantId, UUID policyId) {
+        ExpertBillingPlanView view = call("get billing plan", () -> client.get()
+                .uri(uri -> uri.path("/internal/v1/policies/{id}/billing")
+                        .queryParam("tenantId", tenantId)
+                        .build(policyId))
+                .header(TENANT_HEADER, tenantId.toString())
+                .header(BookScope.BOOK_HEADER, BookScope.DIRECT)
+                .retrieve()
+                .body(ExpertBillingPlanView.class));
+        return toBillingPlan(view);
+    }
+
+    public BillingPlan createBillingPlan(UUID tenantId, UUID policyId,
+                                         CreateBillingPlanCommand command) {
+        ExpertBillingPlanView view = call("create billing plan", () -> client.post()
+                .uri(uri -> uri.path("/internal/v1/policies/{id}/billing")
+                        .queryParam("tenantId", tenantId)
+                        .build(policyId))
+                .header(TENANT_HEADER, tenantId.toString())
+                .header(BookScope.BOOK_HEADER, BookScope.DIRECT)
+                .body(command)
+                .retrieve()
+                .body(ExpertBillingPlanView.class));
+        return toBillingPlan(view);
+    }
+
+    public Installment updateInstallment(UUID tenantId, UUID policyId, UUID installmentId,
+                                         UpdateInstallmentCommand command) {
+        ExpertInstallment installment = call("update billing installment", () -> client.patch()
+                .uri(uri -> uri.path(
+                                "/internal/v1/policies/{id}/billing/installments/{installmentId}")
+                        .queryParam("tenantId", tenantId)
+                        .build(policyId, installmentId))
+                .header(TENANT_HEADER, tenantId.toString())
+                .header(BookScope.BOOK_HEADER, BookScope.DIRECT)
+                .body(command)
+                .retrieve()
+                .body(ExpertInstallment.class));
+        if (installment == null) {
+            throw new ApiException(HttpStatus.BAD_GATEWAY, "EXPERT_BAD_RESPONSE",
+                    "Policy expert returned an empty response");
+        }
+        return toInstallment(installment);
+    }
+
+    /**
+     * The expert returns the plan under {@code plan} plus a separate ordered
+     * installment list; the public projection is flat.
+     */
+    private static BillingPlan toBillingPlan(ExpertBillingPlanView view) {
+        if (view == null || view.plan() == null) {
+            throw new ApiException(HttpStatus.BAD_GATEWAY, "EXPERT_BAD_RESPONSE",
+                    "Policy expert returned an empty response");
+        }
+        ExpertBillingPlan plan = view.plan();
+        List<Installment> installments = view.installments() == null ? List.of()
+                : view.installments().stream().map(PolicyClient::toInstallment).toList();
+        return new BillingPlan(plan.id(), plan.planNumber(), plan.policyId(),
+                plan.totalPremium(), plan.currency(), plan.installmentCount(), plan.frequency(),
+                plan.firstDueDate(), plan.status(), installments);
+    }
+
+    private static Installment toInstallment(ExpertInstallment installment) {
+        return new Installment(installment.id(), installment.installmentNumber(),
+                installment.dueDate(), installment.amount(), installment.status(),
+                installment.paidAt(), installment.paymentId());
+    }
+
     private <T> ExpertItemPage<T> list(String operation, String path, UUID tenantId, UUID policyId,
                                        int page, int size,
                                        ParameterizedTypeReference<ExpertItemPage<T>> type) {
@@ -389,7 +467,9 @@ public class PolicyClient {
                 : expertDetail;
 
         if (rawStatus == HttpStatus.NOT_FOUND.value()) {
-            return new ApiException(HttpStatus.NOT_FOUND, "POLICY_NOT_FOUND", message, issues, meta);
+            String code = expertCode == null || expertCode.isBlank()
+                    ? "POLICY_NOT_FOUND" : expertCode;
+            return new ApiException(HttpStatus.NOT_FOUND, code, message, issues, meta);
         }
         if (rawStatus == HttpStatus.CONFLICT.value()) {
             String code = expertCode == null || expertCode.isBlank()
@@ -496,5 +576,39 @@ public class PolicyClient {
     }
 
     private record ExpertStatusRequest(String status, int expectedVersion, String reason) {
+    }
+
+    /**
+     * Wire shape of the expert billing view: the plan and its ordered
+     * installments are separate members, unlike the flat public projection.
+     */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record ExpertBillingPlanView(ExpertBillingPlan plan, List<ExpertInstallment> installments) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record ExpertBillingPlan(
+            @JsonAlias("planId") UUID id,
+            UUID policyId,
+            String planNumber,
+            BigDecimal totalPremium,
+            String currency,
+            int installmentCount,
+            String frequency,
+            LocalDate firstDueDate,
+            String status
+    ) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record ExpertInstallment(
+            @JsonAlias("installmentId") UUID id,
+            int installmentNumber,
+            LocalDate dueDate,
+            BigDecimal amount,
+            String status,
+            Instant paidAt,
+            UUID paymentId
+    ) {
     }
 }

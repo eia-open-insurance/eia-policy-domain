@@ -44,10 +44,28 @@ All additive under `/api/v1/policies/{policyId}`:
 | `POST` | `/cancel` | Cancel with computed return premium |
 | `GET` | `/reinstatements` | Reinstatement history |
 | `POST` | `/reinstate` | Reinstate with approval and premium evidence |
+| `GET`/`POST` | `/billing` | Billing plan and installments / create the plan |
+| `PATCH` | `/billing/installments/{installmentId}` | Record an installment's payment state |
 
 The expert status, code, `category`, field errors, and `meta` are preserved, so
 `422 BUSINESS_RULE`, `428 APPROVAL_REQUIRED`, and `409` conflicts reach the
 caller unchanged.
+
+### Billing plan
+
+`GET /api/v1/policies/{policyId}/billing` returns the plan projection
+`{planId, planNumber, policyId, totalPremium, currency, installmentCount,
+frequency, firstDueDate, status, installments[]}`. `POST` creates the plan from
+`{installmentCount, frequency, firstDueDate}` and returns `201` with the same
+projection. `PATCH /billing/installments/{installmentId}` accepts
+`{status, paymentId?}` and returns the updated installment
+`{installmentId, installmentNumber, dueDate, amount, status, paidAt, paymentId}`.
+The Policy expert owns the schedule, the amount split, and the payment-state
+rules. The domain validates the request shape and the 1..24 installment window,
+forwards `X-EIA-Tenant` and `X-EIA-Book: DIRECT` on every billing call, and maps
+the expert's `{plan, installments}` view to the flat public projection. A
+supplied non-DIRECT book is `404 BOOK_SCOPE_VIOLATION`, and expert `400`, `404`,
+and `409` problems reach the caller unchanged.
 
 ### Filtering the policy list by insured party
 
@@ -113,7 +131,8 @@ The service listens on port 8084. Every request requires `X-EIA-Tenant`.
   `/limits`, `/aggregate-state`, `/endorsements`, `/insureds`, `/locations`,
   `/cancellations`, `/reinstatements`
 - `POST /api/v1/policies/{id}/coverages`, `/erosion`, `/endorsements`,
-  `/insureds`, `/locations`, `/cancel`, `/reinstate`
+  `/insureds`, `/locations`, `/cancel`, `/reinstate`, `/billing`
+- `PATCH /api/v1/policies/{id}/billing/installments/{installmentId}`
 
 The expert base URL is configured with `eia.policy.expert-url` and defaults to `http://localhost:8083`.
 

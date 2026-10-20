@@ -24,4 +24,15 @@ final class BookScope {
                     "Policy is a DIRECT-only vertical; X-EIA-Book must be DIRECT");
         }
     }
+
+    /**
+     * Billing keeps the DIRECT book context but accepts an absent header for
+     * compatibility with the other policy proxy routes. A supplied book that
+     * is not DIRECT is hidden exactly like a search from another book.
+     */
+    static void requireDirectWhenPresent(String book) {
+        if (book != null && !book.isBlank()) {
+            requireDirect(book);
+        }
+    }
 }

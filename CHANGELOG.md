@@ -35,6 +35,13 @@ The format is based on Keep a Changelog and the project uses Semantic Versioning
   read is tenant-scoped, preserves the `updated_at DESC, id ASC` order and page
   envelope, carries the filter into `_links`, and returns `400 INVALID_PARAMETER`
   for a malformed UUID.
+- Billing plan proxy under `/api/v1/policies/{policyId}/billing`: `GET` returns
+  the `{planId, planNumber, policyId, totalPremium, currency, installmentCount,
+  frequency, firstDueDate, status, installments[]}` projection, `POST` creates a
+  plan from `{installmentCount, frequency, firstDueDate}`, and `PATCH
+  /billing/installments/{installmentId}` records `{status, paymentId?}` and
+  returns the updated installment. The tenant and `X-EIA-Book: DIRECT` are
+  forwarded to the expert, and expert `400`/`404`/`409` problems are preserved.
 
 ### Changed
 
