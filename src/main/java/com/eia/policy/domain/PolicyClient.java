@@ -298,6 +298,17 @@ public class PolicyClient {
                 policyId, command, ifMatch, idempotencyKey, ReinstatementDto.class);
     }
 
+    /**
+     * Renews a policy into a successor term. Renewal is a DIRECT-book command,
+     * so the tenant and the DIRECT book are forwarded on every call in addition
+     * to the query-scoped tenant used by the other proxy routes.
+     */
+    public Mutation<PolicyDto> renewPolicy(UUID tenantId, UUID policyId,
+                                           RenewPolicyCommand command) {
+        return mutateDirect("renew policy", "/internal/v1/policies/{id}/renew", tenantId, policyId,
+                command, PolicyDto.class);
+    }
+
     // ------------------------------------------------------------------
     // Billing plan and installment schedule. The expert owns billing
     // (SPEC 11.2.13); the domain forwards the tenant and DIRECT book
@@ -406,6 +417,29 @@ public class PolicyClient {
             }
             return spec.body(body).retrieve().toEntity(type);
         });
+        if (response.getBody() == null) {
+            throw new ApiException(HttpStatus.BAD_GATEWAY, "EXPERT_BAD_RESPONSE",
+                    "Policy expert returned an empty response");
+        }
+        return Mutation.of(response);
+    }
+
+    /**
+     * A mutation on a DIRECT-book route: the tenant is carried both as the
+     * query scope used by the internal API and as the canonical context header,
+     * together with the book header.
+     */
+    private <T> Mutation<T> mutateDirect(String operation, String path, UUID tenantId,
+                                         UUID policyId, Object body, Class<T> type) {
+        ResponseEntity<T> response = callEntity(operation, () -> client.post()
+                .uri(uri -> uri.path(path)
+                        .queryParam("tenantId", tenantId)
+                        .build(policyId))
+                .header(TENANT_HEADER, tenantId.toString())
+                .header(BookScope.BOOK_HEADER, BookScope.DIRECT)
+                .body(body)
+                .retrieve()
+                .toEntity(type));
         if (response.getBody() == null) {
             throw new ApiException(HttpStatus.BAD_GATEWAY, "EXPERT_BAD_RESPONSE",
                     "Policy expert returned an empty response");

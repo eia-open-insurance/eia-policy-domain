@@ -19,6 +19,7 @@ import java.util.UUID;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -39,6 +40,8 @@ class PolicyContractControllerTest {
     private static final UUID LOCATION_ID = UUID.fromString("dddddddd-dddd-7ddd-8ddd-dddddddddddd");
     private static final UUID CANCELLATION_ID = UUID.fromString("eeeeeeee-eeee-7eee-8eee-eeeeeeeeeeee");
     private static final UUID REINSTATEMENT_ID = UUID.fromString("ffffffff-ffff-7fff-8fff-ffffffffffff");
+    private static final UUID SUCCESSOR_ID = UUID.fromString("55555555-5555-7555-8555-555555555555");
+    private static final UUID PARTY_ID = UUID.fromString("22222222-2222-7222-8222-222222222222");
     private static final LocalDate FROM = LocalDate.of(2026, 1, 1);
     private static final LocalDate TO = LocalDate.of(2027, 1, 1);
 
@@ -263,6 +266,83 @@ class PolicyContractControllerTest {
     }
 
     @Test
+    void renewsAPolicyAndReturnsTheSuccessor() throws Exception {
+        when(service.renewPolicy(eq(TENANT), eq(POLICY_ID), any(RenewPolicyCommand.class)))
+                .thenReturn(new Mutation<>(renewedPolicy(), "\"0\"", false));
+
+        mvc.perform(post("/api/v1/policies/{policyId}/renew", POLICY_ID)
+                        .header("X-EIA-Tenant", TENANT.toString())
+                        .header("X-EIA-Book", "DIRECT")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(renewCommand())))
+                .andExpect(status().isCreated())
+                .andExpect(header().string("ETag", "\"0\""))
+                .andExpect(header().string("Idempotent-Replayed", "false"))
+                .andExpect(jsonPath("$.id").value(SUCCESSOR_ID.toString()))
+                .andExpect(jsonPath("$.renewedFromPolicyId").value(POLICY_ID.toString()))
+                .andExpect(jsonPath("$.policyNumber").value("POL-2026-0000002"))
+                .andExpect(jsonPath("$.effectiveDate").value("2027-01-01"))
+                .andExpect(jsonPath("$.expirationDate").value("2028-01-01"))
+                .andExpect(jsonPath("$.premiumAmount").value("130000.0000"))
+                .andExpect(jsonPath("$.limitAmount").value("2500000.0000"));
+
+        verify(service).renewPolicy(eq(TENANT), eq(POLICY_ID),
+                any(RenewPolicyCommand.class));
+    }
+
+    @Test
+    void validatesTheRenewalBody() throws Exception {
+        mvc.perform(post("/api/v1/policies/{policyId}/renew", POLICY_ID)
+                        .header("X-EIA-Tenant", TENANT.toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.errors[*].field",
+                        org.hamcrest.Matchers.hasItems("effectiveDate", "expirationDate")));
+
+        verifyNoInteractions(service);
+    }
+
+    @Test
+    void rejectsANonDirectBookBeforeCallingTheExpert() throws Exception {
+        mvc.perform(post("/api/v1/policies/{policyId}/renew", POLICY_ID)
+                        .header("X-EIA-Tenant", TENANT.toString())
+                        .header("X-EIA-Book", "ASSUMED")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(renewCommand())))
+                .andExpect(status().isNotFound())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.code").value("BOOK_SCOPE_VIOLATION"))
+                .andExpect(jsonPath("$.category").value("NOT_FOUND"));
+
+        verifyNoInteractions(service);
+    }
+
+    @Test
+    void preservesTheExpertRenewalConflictProblem() throws Exception {
+        when(service.renewPolicy(eq(TENANT), eq(POLICY_ID), any(RenewPolicyCommand.class)))
+                .thenThrow(new ApiException(HttpStatus.CONFLICT, "RENEWAL_NOT_ALLOWED",
+                        "A cancelled policy cannot be renewed.",
+                        List.of(new ApiException.FieldIssue("status", "RENEWAL_NOT_ALLOWED",
+                                "Policy status CANCELLED is not renewable.")),
+                        Map.of("sourceStatus", "CANCELLED")));
+
+        mvc.perform(post("/api/v1/policies/{policyId}/renew", POLICY_ID)
+                        .header("X-EIA-Tenant", TENANT.toString())
+                        .header("X-EIA-Book", "DIRECT")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(renewCommand())))
+                .andExpect(status().isConflict())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.code").value("RENEWAL_NOT_ALLOWED"))
+                .andExpect(jsonPath("$.category").value("CONFLICT"))
+                .andExpect(jsonPath("$.errors[0].field").value("status"))
+                .andExpect(jsonPath("$.meta.sourceStatus").value("CANCELLED"));
+    }
+
+    @Test
     void requiresTheTenantHeader() throws Exception {
         mvc.perform(get("/api/v1/policies/{policyId}/versions", POLICY_ID))
                 .andExpect(status().isBadRequest())
@@ -432,5 +512,18 @@ class PolicyContractControllerTest {
                 VERSION_ID, LocalDate.of(2026, 8, 1), "Premium received", UUID.randomUUID(),
                 UUID.randomUUID(), "RCPT-2026-0001", new BigDecimal("1500.0000"), "USD",
                 "APPROVED", now);
+    }
+
+    private static RenewPolicyCommand renewCommand() {
+        return new RenewPolicyCommand(LocalDate.of(2027, 1, 1), LocalDate.of(2028, 1, 1),
+                new BigDecimal("130000.0000"), "USD", new BigDecimal("2500000.0000"), "USD");
+    }
+
+    private static PolicyDto renewedPolicy() {
+        Instant now = Instant.parse("2026-10-20T12:00:00Z");
+        return new PolicyDto(SUCCESSOR_ID, TENANT, "POL-2026-0000002", "CGL", PARTY_ID,
+                "DRAFT", LocalDate.of(2027, 1, 1), LocalDate.of(2028, 1, 1),
+                new BigDecimal("130000.0000"), "USD", new BigDecimal("2500000.0000"), "USD",
+                0, now, now, POLICY_ID);
     }
 }

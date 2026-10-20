@@ -22,8 +22,9 @@ The format is based on Keep a Changelog and the project uses Semantic Versioning
   aggregate erosion, endorsements, insureds/locations, cancellation, and
   reinstatement under `/api/v1/policies/{policyId}`.
 - Page envelopes with public `_links` for every second-slice collection.
-- Mutation responses echo the expert `ETag` and `Idempotent-Replayed` header;
-  `If-Match` and `Idempotency-Key` are validated before the expert call.
+- Second-slice mutation responses echo the expert `ETag` and
+  `Idempotent-Replayed` header; `If-Match` and `Idempotency-Key` are validated
+  before the expert call where the command supports them.
 - Expert `422 BUSINESS_RULE` and `428 APPROVAL_REQUIRED` problems pass through
   unchanged.
 - `GET /api/v1/policies/search` with the shared global-search envelope
@@ -42,6 +43,11 @@ The format is based on Keep a Changelog and the project uses Semantic Versioning
   /billing/installments/{installmentId}` records `{status, paymentId?}` and
   returns the updated installment. The tenant and `X-EIA-Book: DIRECT` are
   forwarded to the expert, and expert `400`/`404`/`409` problems are preserved.
+- `POST /api/v1/policies/{policyId}/renew` renews a policy into a successor
+  term from `{effectiveDate, expirationDate, premiumAmount?, premiumCurrency?,
+  limitAmount?, limitCurrency?}`. The successor `PolicyDto` exposes
+  `renewedFromPolicyId`, the tenant and `X-EIA-Book: DIRECT` are forwarded, and
+  expert `400`/`404`/`409` problems are preserved.
 
 ### Changed
 

@@ -19,9 +19,9 @@ The domain API validates tenant scope, policy dates, non-negative premium and li
 
 The second slice proxies the policy contract surface and keeps the public
 conventions on every new route: page envelopes for collections, strong ETags on
-mutations, optional `If-Match`, and optional `Idempotency-Key` with
-`Idempotent-Replayed`. Business rules stay in the expert so both services
-enforce one rule set.
+mutations, and optional `If-Match` / `Idempotency-Key` where the expert command
+supports them. Business rules stay in the expert so both services enforce one
+rule set.
 
 ### Second-slice endpoints
 
@@ -44,6 +44,7 @@ All additive under `/api/v1/policies/{policyId}`:
 | `POST` | `/cancel` | Cancel with computed return premium |
 | `GET` | `/reinstatements` | Reinstatement history |
 | `POST` | `/reinstate` | Reinstate with approval and premium evidence |
+| `POST` | `/renew` | Renew into a successor term |
 | `GET`/`POST` | `/billing` | Billing plan and installments / create the plan |
 | `PATCH` | `/billing/installments/{installmentId}` | Record an installment's payment state |
 
@@ -66,6 +67,18 @@ forwards `X-EIA-Tenant` and `X-EIA-Book: DIRECT` on every billing call, and maps
 the expert's `{plan, installments}` view to the flat public projection. A
 supplied non-DIRECT book is `404 BOOK_SCOPE_VIOLATION`, and expert `400`, `404`,
 and `409` problems reach the caller unchanged.
+
+### Policy renewal
+
+`POST /api/v1/policies/{policyId}/renew` renews the policy into a successor
+term. The body is `{effectiveDate, expirationDate, premiumAmount?,
+premiumCurrency?, limitAmount?, limitCurrency?}`; omitted money overrides
+default to the expiring term in the expert. The response is `201` with the
+successor `PolicyDto`, whose `renewedFromPolicyId` points back to the expiring
+policy, plus the expert `ETag`. The domain forwards `X-EIA-Tenant` and
+`X-EIA-Book: DIRECT` on every renewal, rejects a supplied non-DIRECT book with
+`404 BOOK_SCOPE_VIOLATION`, and preserves expert `400`, `404`, and `409`
+problems unchanged.
 
 ### Filtering the policy list by insured party
 
@@ -131,7 +144,7 @@ The service listens on port 8084. Every request requires `X-EIA-Tenant`.
   `/limits`, `/aggregate-state`, `/endorsements`, `/insureds`, `/locations`,
   `/cancellations`, `/reinstatements`
 - `POST /api/v1/policies/{id}/coverages`, `/erosion`, `/endorsements`,
-  `/insureds`, `/locations`, `/cancel`, `/reinstate`, `/billing`
+  `/insureds`, `/locations`, `/cancel`, `/reinstate`, `/renew`, `/billing`
 - `PATCH /api/v1/policies/{id}/billing/installments/{installmentId}`
 
 The expert base URL is configured with `eia.policy.expert-url` and defaults to `http://localhost:8083`.

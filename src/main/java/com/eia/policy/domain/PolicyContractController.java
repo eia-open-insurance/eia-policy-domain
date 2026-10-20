@@ -16,9 +16,10 @@ import java.util.UUID;
 
 /**
  * Public second-slice Policy API: immutable versions, coverage/limit schedules
- * with aggregate erosion, endorsements, insureds and locations, and
- * cancellation/reinstatement. Mutations echo the strong aggregate ETag and the
- * {@code Idempotent-Replayed} marker from the expert.
+ * with aggregate erosion, endorsements, insureds and locations,
+ * cancellation/reinstatement, and renewal into a successor policy. Mutations
+ * echo the strong aggregate ETag and the {@code Idempotent-Replayed} marker
+ * from the expert.
  */
 @RestController
 @RequestMapping("/api/v1/policies/{policyId}")
@@ -209,6 +210,21 @@ public class PolicyContractController {
             @Valid @RequestBody ReinstatePolicyCommand command) {
         return respond(service.reinstatePolicy(tenantId, policyId, command, ifMatch,
                 idempotencyKey), HttpStatus.CREATED);
+    }
+
+    /**
+     * Renews into a successor term. The successor carries
+     * {@code renewedFromPolicyId} back to this policy; the tenant and DIRECT
+     * book are forwarded to the expert.
+     */
+    @PostMapping("/renew")
+    public ResponseEntity<PolicyDto> renew(
+            @RequestHeader(TENANT_HEADER) UUID tenantId,
+            @RequestHeader(value = BookScope.BOOK_HEADER, required = false) String book,
+            @PathVariable UUID policyId,
+            @Valid @RequestBody RenewPolicyCommand command) {
+        BookScope.requireDirectWhenPresent(book);
+        return respond(service.renewPolicy(tenantId, policyId, command), HttpStatus.CREATED);
     }
 
     private static <T> ResponseEntity<T> respond(Mutation<T> mutation, HttpStatus freshStatus) {

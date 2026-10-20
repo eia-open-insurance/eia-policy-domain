@@ -49,6 +49,7 @@ class PolicyQueryRepositoryTest {
                     premium_currency CHAR(3) NOT NULL,
                     limit_amount NUMERIC(19,4) NOT NULL,
                     limit_currency CHAR(3) NOT NULL,
+                    renewed_from_policy_id UUID,
                     version INTEGER NOT NULL DEFAULT 0,
                     created_at TIMESTAMP WITH TIME ZONE NOT NULL,
                     updated_at TIMESTAMP WITH TIME ZONE NOT NULL
@@ -77,8 +78,20 @@ class PolicyQueryRepositoryTest {
     }
 
     @Test
-    void returnsAnEmptyPageWhenNoPolicyMatches() {
-        policy(1, TENANT, OTHER_PARTY, "DRAFT", BASE);
+    void mapsRenewalLineageFromThePolicyRow() {
+        UUID predecessor = UUID.fromString("99999999-9999-7999-8999-999999999999");
+        policy(1, TENANT, PARTY, "DRAFT", BASE);
+        jdbc.update("UPDATE policy SET renewed_from_policy_id = ? WHERE id = ?",
+                predecessor, id(1));
+
+        PolicyPageData page = repository.findPageByInsuredParty(TENANT, PARTY, 0, 20);
+
+        assertThat(page.items()).singleElement().satisfies(policy ->
+                assertThat(policy.renewedFromPolicyId()).isEqualTo(predecessor));
+    }
+
+    @Test
+    void returnsAnEmptyPageWhenNoPolicyMatches() {        policy(1, TENANT, OTHER_PARTY, "DRAFT", BASE);
 
         PolicyPageData page = repository.findPageByInsuredParty(TENANT, PARTY, 0, 20);
 

@@ -116,6 +116,38 @@ class PolicyContractServiceTest {
         assertThat(service().applyErosion(TENANT, POLICY_ID, command, null)).isSameAs(mutation);
     }
 
+    @Test
+    void rejectsARenewalWhoseExpirationPrecedesItsEffectiveDate() {
+        RenewPolicyCommand command = new RenewPolicyCommand(LocalDate.of(2028, 1, 1),
+                LocalDate.of(2027, 1, 1), null, null, null, null);
+
+        assertThatThrownBy(() -> service().renewPolicy(TENANT, POLICY_ID, command))
+                .isInstanceOf(ApiException.class)
+                .satisfies(ex -> {
+                    ApiException api = (ApiException) ex;
+                    assertThat(api.status()).isEqualTo(HttpStatus.BAD_REQUEST);
+                    assertThat(api.code()).isEqualTo("VALIDATION_ERROR");
+                    assertThat(api.details()).singleElement().satisfies(issue -> {
+                        assertThat(issue.field()).isEqualTo("expirationDate");
+                        assertThat(issue.code()).isEqualTo("INVALID_DATE_RANGE");
+                    });
+                });
+        verify(client, never()).renewPolicy(any(), any(), any());
+    }
+
+    @Test
+    void delegatesRenewalToTheExpert() {
+        RenewPolicyCommand command = new RenewPolicyCommand(LocalDate.of(2027, 1, 1),
+                LocalDate.of(2028, 1, 1), new BigDecimal("130000.0000"), "USD",
+                new BigDecimal("2500000.0000"), "USD");
+        Mutation<PolicyDto> mutation = new Mutation<>(null, "\"0\"", false);
+        when(client.renewPolicy(TENANT, POLICY_ID, command)).thenReturn(mutation);
+
+        Mutation<PolicyDto> result = service().renewPolicy(TENANT, POLICY_ID, command);
+
+        assertThat(result).isSameAs(mutation);
+    }
+
     private PolicyContractService service() {
         return new PolicyContractService(client);
     }

@@ -22,5 +22,6 @@ public record PolicyDto(
         String limitCurrency,
         int version,
         Instant createdAt,
-        Instant updatedAt
+        Instant updatedAt,
+        UUID renewedFromPolicyId
 ) {}

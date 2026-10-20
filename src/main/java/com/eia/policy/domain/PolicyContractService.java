@@ -1,7 +1,10 @@
 package com.eia.policy.domain;
 
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -141,6 +144,38 @@ public class PolicyContractService {
         EntityTags.parse(ifMatch);
         return client.reinstatePolicy(tenantId, policyId, command, ifMatch,
                 IdempotencyKeys.normalize(idempotencyKey));
+    }
+
+    /**
+     * Renews a policy into a successor term. The new-term dates, premium, and
+     * limit are validated here only for request shape; the expert owns the
+     * renewal eligibility and pricing rules.
+     */
+    public Mutation<PolicyDto> renewPolicy(UUID tenantId, UUID policyId,
+                                           RenewPolicyCommand command) {
+        validateRenewal(command);
+        return client.renewPolicy(tenantId, policyId, command);
+    }
+
+    private static void validateRenewal(RenewPolicyCommand command) {
+        List<ApiException.FieldIssue> issues = new ArrayList<>();
+        if (command.effectiveDate() != null && command.expirationDate() != null
+                && command.effectiveDate().isAfter(command.expirationDate())) {
+            issues.add(new ApiException.FieldIssue("expirationDate", "INVALID_DATE_RANGE",
+                    "expirationDate must be on or after effectiveDate"));
+        }
+        if (command.premiumAmount() != null && command.premiumAmount().signum() < 0) {
+            issues.add(new ApiException.FieldIssue("premiumAmount", "MIN_VALUE",
+                    "premiumAmount must be non-negative"));
+        }
+        if (command.limitAmount() != null && command.limitAmount().signum() < 0) {
+            issues.add(new ApiException.FieldIssue("limitAmount", "MIN_VALUE",
+                    "limitAmount must be non-negative"));
+        }
+        if (!issues.isEmpty()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR",
+                    "Policy renewal validation failed", issues);
+        }
     }
 
     private static <T> ItemPage<T> page(String basePath, ExpertItemPage<T> expertPage) {

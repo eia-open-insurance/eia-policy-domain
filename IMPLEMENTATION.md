@@ -5,18 +5,19 @@
 The Policy domain proxies both Policy slices. The first slice owns tenant
 validation, create/status orchestration, and the public problem envelope. The
 second slice adds pass-through routes for versions, coverage and limits,
-aggregate erosion, endorsements, insureds and locations, cancellation, and
-reinstatement. Billing adds the plan and installment schedule projection under
-the same tenant and DIRECT-book context.
+aggregate erosion, endorsements, insureds and locations, cancellation,
+reinstatement, and renewal into a successor term. Billing adds the plan and
+installment schedule projection under the same tenant and DIRECT-book context.
 
 ## Structure
 
 | Class | Responsibility |
 |---|---|
 | `PolicyController` / `PolicyService` | First-slice public routes and lifecycle |
-| `PolicyContractController` / `PolicyContractService` | Second-slice public routes, page link rebuild, header validation |
+| `PolicyContractController` / `PolicyContractService` | Second-slice public routes, renewal, page link rebuild, header validation |
 | `PolicyBillingController` / `PolicyBillingService` | Billing plan and installment routes; DIRECT-book guard |
 | `BillingPlan`, `Installment` | Public billing projections |
+| `RenewPolicyCommand` | Renewal request body; optional premium and limit overrides |
 | `PolicyClient` | Anti-corruption boundary to the expert; translates expert problems |
 | `PolicyQueryRepository` | Tenant-scoped direct read for the `insuredPartyId` list filter |
 | `PolicyLifecycle` | Status transition table |
@@ -35,6 +36,9 @@ header forwarding and expert problem translation. `PolicyBillingControllerTest`
 covers the three billing routes, validation, tenant/book handling, and problem
 propagation; `PolicyBillingClientTest` uses `MockRestServiceServer` for the
 forwarded tenant/book headers, payloads, the installment list, and preserved
+`400`/`404`/`409` problems. `PolicyRenewalClientTest` uses
+`MockRestServiceServer` for the renewal tenant/book headers, new-term payload,
+successor policy and `renewedFromPolicyId` response, and preserved
 `400`/`404`/`409` problems.
 
 ## Known SPEC gaps in this slice
