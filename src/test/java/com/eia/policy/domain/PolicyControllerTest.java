@@ -51,6 +51,9 @@ class PolicyControllerTest {
     @MockitoBean
     private PolicyClient client;
 
+    @MockitoBean
+    private PolicyQueryRepository queryRepository;
+
     @Test
     void requiresTenantHeaderAsProblem() throws Exception {
         mvc.perform(get("/api/v1/policies"))
@@ -127,6 +130,100 @@ class PolicyControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$._links.prev.href").value("/api/v1/policies?page=1&size=20"))
                 .andExpect(jsonPath("$._links.next").doesNotExist());
+    }
+
+    @Test
+    void filtersPoliciesByInsuredPartyId() throws Exception {
+        when(queryRepository.findPageByInsuredParty(TENANT, PARTY, 0, 20))
+                .thenReturn(new PolicyPageData(List.of(policy("DRAFT", 0)), 1));
+
+        mvc.perform(get("/api/v1/policies")
+                        .header("X-EIA-Tenant", TENANT.toString())
+                        .param("insuredPartyId", PARTY.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[0].id").value(POLICY_ID.toString()))
+                .andExpect(jsonPath("$.items[0].insuredPartyId").value(PARTY.toString()))
+                .andExpect(jsonPath("$.page").value(0))
+                .andExpect(jsonPath("$.size").value(20))
+                .andExpect(jsonPath("$.total").value(1))
+                .andExpect(jsonPath("$._links.self.href").value(
+                        "/api/v1/policies?insuredPartyId=" + PARTY + "&page=0&size=20"));
+
+        verify(queryRepository).findPageByInsuredParty(TENANT, PARTY, 0, 20);
+        verifyNoInteractions(client);
+    }
+
+    @Test
+    void returnsAnEmptyPageWhenNoPolicyMatchesTheInsuredParty() throws Exception {
+        when(queryRepository.findPageByInsuredParty(TENANT, PARTY, 0, 20))
+                .thenReturn(new PolicyPageData(List.of(), 0));
+
+        mvc.perform(get("/api/v1/policies")
+                        .header("X-EIA-Tenant", TENANT.toString())
+                        .param("insuredPartyId", PARTY.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items").isEmpty())
+                .andExpect(jsonPath("$.total").value(0))
+                .andExpect(jsonPath("$._links.self.href").value(
+                        "/api/v1/policies?insuredPartyId=" + PARTY + "&page=0&size=20"))
+                .andExpect(jsonPath("$._links.next").doesNotExist())
+                .andExpect(jsonPath("$._links.prev").doesNotExist());
+    }
+
+    @Test
+    void scopesTheInsuredPartyFilterToTheTenant() throws Exception {
+        UUID otherTenant = UUID.fromString("44444444-4444-7444-8444-444444444444");
+        when(queryRepository.findPageByInsuredParty(otherTenant, PARTY, 0, 20))
+                .thenReturn(new PolicyPageData(List.of(), 0));
+
+        mvc.perform(get("/api/v1/policies")
+                        .header("X-EIA-Tenant", otherTenant.toString())
+                        .param("insuredPartyId", PARTY.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items").isEmpty());
+
+        verify(queryRepository).findPageByInsuredParty(otherTenant, PARTY, 0, 20);
+        verify(queryRepository, never()).findPageByInsuredParty(TENANT, PARTY, 0, 20);
+    }
+
+    @Test
+    void rejectsAMalformedInsuredPartyId() throws Exception {
+        mvc.perform(get("/api/v1/policies")
+                        .header("X-EIA-Tenant", TENANT.toString())
+                        .param("insuredPartyId", "not-a-uuid"))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.code").value("INVALID_PARAMETER"))
+                .andExpect(jsonPath("$.errors[0].field").value("insuredPartyId"));
+
+        verifyNoInteractions(client, queryRepository);
+    }
+
+    @Test
+    void pagingKeepsTheInsuredPartyFilterInTheLinks() throws Exception {
+        when(queryRepository.findPageByInsuredParty(TENANT, PARTY, 1, 5))
+                .thenReturn(new PolicyPageData(
+                        List.of(policy("DRAFT", 0), policy("QUOTED", 1)), 12));
+
+        mvc.perform(get("/api/v1/policies")
+                        .header("X-EIA-Tenant", TENANT.toString())
+                        .param("insuredPartyId", PARTY.toString())
+                        .param("page", "1")
+                        .param("size", "5"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items.length()").value(2))
+                .andExpect(jsonPath("$.page").value(1))
+                .andExpect(jsonPath("$.size").value(5))
+                .andExpect(jsonPath("$.total").value(12))
+                .andExpect(jsonPath("$._links.self.href").value(
+                        "/api/v1/policies?insuredPartyId=" + PARTY + "&page=1&size=5"))
+                .andExpect(jsonPath("$._links.next.href").value(
+                        "/api/v1/policies?insuredPartyId=" + PARTY + "&page=2&size=5"))
+                .andExpect(jsonPath("$._links.prev.href").value(
+                        "/api/v1/policies?insuredPartyId=" + PARTY + "&page=0&size=5"));
+
+        verify(queryRepository).findPageByInsuredParty(TENANT, PARTY, 1, 5);
+        verifyNoInteractions(client);
     }
 
     @Test

@@ -32,8 +32,9 @@ public class PolicyController {
     @GetMapping
     public PolicyPage list(@RequestHeader(TENANT_HEADER) UUID tenantId,
                            @RequestParam(defaultValue = "0") int page,
-                           @RequestParam(defaultValue = "20") int size) {
-        return service.list(tenantId, page, size);
+                           @RequestParam(defaultValue = "20") int size,
+                           @RequestParam(required = false) UUID insuredPartyId) {
+        return service.list(tenantId, page, size, insuredPartyId);
     }
 
     @GetMapping("/{id}")

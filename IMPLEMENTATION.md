@@ -15,6 +15,7 @@ reinstatement.
 | `PolicyController` / `PolicyService` | First-slice public routes and lifecycle |
 | `PolicyContractController` / `PolicyContractService` | Second-slice public routes, page link rebuild, header validation |
 | `PolicyClient` | Anti-corruption boundary to the expert; translates expert problems |
+| `PolicyQueryRepository` | Tenant-scoped direct read for the `insuredPartyId` list filter |
 | `PolicyLifecycle` | Status transition table |
 | `ItemPage`, `Mutation`, `EntityTags`, `Pagination`, `PageLinks` | Shared response and concurrency helpers |
 

@@ -31,6 +31,10 @@ The format is based on Keep a Changelog and the project uses Semantic Versioning
   a 10-default / 25-capped limit, and a `/policy?record=<id>` href. The endpoint
   requires `X-EIA-Book: DIRECT` and returns `404 BOOK_SCOPE_VIOLATION` for any
   other book.
+- Optional `insuredPartyId` UUID filter on `GET /api/v1/policies`. The filtered
+  read is tenant-scoped, preserves the `updated_at DESC, id ASC` order and page
+  envelope, carries the filter into `_links`, and returns `400 INVALID_PARAMETER`
+  for a malformed UUID.
 
 ### Changed
 

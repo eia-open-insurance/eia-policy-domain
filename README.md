@@ -49,6 +49,16 @@ The expert status, code, `category`, field errors, and `meta` are preserved, so
 `422 BUSINESS_RULE`, `428 APPROVAL_REQUIRED`, and `409` conflicts reach the
 caller unchanged.
 
+### Filtering the policy list by insured party
+
+`GET /api/v1/policies?insuredPartyId={partyId}&page=0&size=5` filters the
+tenant-scoped list to one insured party. The response keeps the standard page
+envelope; the filter is repeated in every `_links` href so paging never widens
+the result set, and the order stays `updated_at DESC, id ASC`. A malformed UUID
+is `400 INVALID_PARAMETER`. The unfiltered list keeps proxying the Policy expert
+unchanged; the filtered read uses the tenant-scoped `eia_policy` data store
+because the expert does not expose an insured-party filter.
+
 ### Global search
 
 `GET /api/v1/policies/search?q={term}&limit=10` returns the common shell search

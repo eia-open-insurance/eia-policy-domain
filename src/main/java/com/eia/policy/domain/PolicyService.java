@@ -13,9 +13,11 @@ import java.util.UUID;
 @Service
 public class PolicyService {
     private final PolicyClient client;
+    private final PolicyQueryRepository queryRepository;
 
-    public PolicyService(PolicyClient client) {
+    public PolicyService(PolicyClient client, PolicyQueryRepository queryRepository) {
         this.client = client;
+        this.queryRepository = queryRepository;
     }
 
     /**
@@ -27,16 +29,33 @@ public class PolicyService {
     }
 
     public PolicyPage list(UUID tenantId, int page, int size) {
+        return list(tenantId, page, size, null);
+    }
+
+    /**
+     * Lists tenant-scoped policies, optionally filtered by insured party. The
+     * unfiltered read keeps proxying the Policy expert; the expert exposes no
+     * insured-party filter, so the filtered read uses the tenant-scoped
+     * {@link PolicyQueryRepository} with the same ordering and page envelope.
+     * The filter is carried into the {@code _links} so paging never widens the
+     * result set.
+     */
+    public PolicyPage list(UUID tenantId, int page, int size, UUID insuredPartyId) {
         Pagination.validate(page, size);
-        ExpertPolicyPage expertPage = client.findAll(tenantId, page, size);
-        long total = expertPage.total();
-        return new PolicyPage(
-                expertPage.items(),
-                page,
-                size,
-                total,
-                PageLinks.build("/api/v1/policies", Map.of(), page, size, total)
-        );
+        if (insuredPartyId == null) {
+            ExpertPolicyPage expertPage = client.findAll(tenantId, page, size);
+            return page(expertPage.items(), page, size, expertPage.total(), Map.of());
+        }
+        PolicyPageData data = queryRepository.findPageByInsuredParty(
+                tenantId, insuredPartyId, page, size);
+        return page(data.items(), page, size, data.total(),
+                PageLinks.filters("insuredPartyId", insuredPartyId.toString()));
+    }
+
+    private static PolicyPage page(List<PolicyDto> items, int page, int size, long total,
+                                  Map<String, String> filters) {
+        return new PolicyPage(items, page, size, total,
+                PageLinks.build("/api/v1/policies", filters, page, size, total));
     }
 
     public PolicyDto get(UUID tenantId, UUID id) {
