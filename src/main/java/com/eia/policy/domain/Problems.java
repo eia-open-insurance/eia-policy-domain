@@ -99,6 +99,8 @@ final class Problems {
             Map.entry("INVALID_INSTALLMENT_STATUS", "Invalid installment status"),
             Map.entry("INSTALLMENT_ALREADY_SETTLED", "Installment already settled"),
             Map.entry("INSTALLMENT_NOT_SETTLEABLE", "Installment not settleable"),
+            Map.entry("MASS_TORT_PROFILE_NOT_FOUND", "Mass tort profile not found"),
+            Map.entry("INVALID_MASS_TORT_PROFILE", "Invalid mass tort profile"),
             Map.entry("EXPERT_UNAVAILABLE", "Policy expert unavailable"),
             Map.entry("EXPERT_ERROR", "Policy expert error"),
             Map.entry("EXPERT_BAD_RESPONSE", "Policy expert returned an invalid response"),

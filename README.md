@@ -101,6 +101,23 @@ policy, plus the expert `ETag`. The domain forwards `X-EIA-Tenant` and
 `404 BOOK_SCOPE_VIOLATION`, and preserves expert `400`, `404`, and `409`
 problems unchanged.
 
+### Mass tort profile
+
+`GET /api/v1/policies/{policyId}/mass-tort-profile` returns the profile
+projection `{profileId, policyId, tortType, triggerType, allocationMethod,
+allocationNotes, coverageBlockStart, coverageBlockEnd, status, updatedAt}`.
+`PUT` replaces the profile from `{tortType, triggerType, allocationMethod,
+allocationNotes?, coverageBlockStart?, coverageBlockEnd?, status}` and returns
+the stored projection. A profile is `DRAFT` until it is complete; moving it to
+`COMPLETE` requires the allocation notes and both coverage-block dates, and the
+block is an inclusive date range whose end cannot precede its start. The Policy
+expert owns the tort, trigger, allocation, and status vocabularies plus the
+completeness rule. The domain validates the request shape, forwards
+`X-EIA-Tenant` and `X-EIA-Book: DIRECT` on every call, and rejects a supplied
+non-DIRECT book with `404 BOOK_SCOPE_VIOLATION`. Expert `400`, `404`, and `409`
+problems reach the caller unchanged; a policy without a profile is
+`404 MASS_TORT_PROFILE_NOT_FOUND`.
+
 ### Filtering the policy list by insured party
 
 `GET /api/v1/policies?insuredPartyId={partyId}&page=0&size=5` filters the
@@ -164,6 +181,7 @@ The service listens on port 8084. Every request requires `X-EIA-Tenant`.
 - `GET /api/v1/policies/{id}/versions`, `/versions/current`, `/coverages`,
   `/limits`, `/aggregate-state`, `/endorsements`, `/insureds`, `/locations`,
   `/cancellations`, `/reinstatements`
+- `GET`/`PUT /api/v1/policies/{id}/mass-tort-profile`
 - `POST /api/v1/policies/{id}/coverages`, `/erosion`, `/endorsements`,
   `/insureds`, `/locations`, `/cancel`, `/reinstate`, `/renew`, `/billing`
 - `PATCH /api/v1/policies/{id}/billing/installments/{installmentId}`

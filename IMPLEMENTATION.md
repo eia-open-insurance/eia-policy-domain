@@ -9,7 +9,8 @@ aggregate erosion, endorsements, insureds and locations, cancellation,
 reinstatement, and renewal into a successor term. Billing adds the plan and
 installment schedule projection under the same tenant and DIRECT-book context.
 A cross-policy premium-receivable read projects installments as receivables for
-the collections/ageing view.
+the collections/ageing view, and the mass tort profile route reads and replaces
+the allocation basis that Direct Claims uses.
 
 ## Structure
 
@@ -18,8 +19,11 @@ the collections/ageing view.
 | `PolicyController` / `PolicyService` | First-slice public routes and lifecycle |
 | `PolicyContractController` / `PolicyContractService` | Second-slice public routes, renewal, page link rebuild, header validation |
 | `PolicyBillingController` / `PolicyBillingService` | Billing plan and installment routes; DIRECT-book guard |
+| `PolicyMassTortProfileController` / `PolicyMassTortProfileService` | Mass tort profile read/replace route; DIRECT-book guard |
 | `ReceivableController` / `ReceivableService` | Cross-policy `GET /api/v1/billing/installments`; status/limit normalization |
 | `BillingPlan`, `Installment` | Public billing projections |
+| `MassTortProfile` | Public mass tort profile projection |
+| `UpdateMassTortProfileCommand` | Mass tort profile replace body; shape validation only |
 | `Receivable`, `ReceivableSummary` | Public receivable projection and its totals |
 | `RenewPolicyCommand` | Renewal request body; optional premium and limit overrides |
 | `PolicyClient` | Anti-corruption boundary to the expert; translates expert problems |
@@ -39,6 +43,23 @@ insured-party context and a `daysPastDue` age. The domain recomputes totals,
 count, and `daysPastDue` only when the expert omits them, so the public summary
 stays coherent during rollout. The expert owns that projection; this repository
 contains the domain side of the contract only.
+
+## Mass tort profile expert contract
+
+The domain forwards `GET` and `PUT /internal/v1/policies/{policyId}/mass-tort-profile`
+with `X-EIA-Tenant`, `X-EIA-Book: DIRECT`, and the `tenantId` query scope. The
+expert returns the one-per-policy profile `{id, tenantId, policyId, tortType,
+triggerType, allocationMethod, allocationNotes, coverageBlockStart,
+coverageBlockEnd, status, updatedAt}`; the domain renames `id` to `profileId` and
+publishes the flat projection without `tenantId`. `PUT` is a replace that the
+expert implements as an upsert; the domain returns the stored projection. The
+expert owns the `DRAFT`/`COMPLETE` status vocabulary, the tort/trigger/allocation
+enumerations, the 2000-character notes cap, the inclusive coverage-block date
+order, and the COMPLETE gate, so every `400` is a preserved expert problem. A
+missing policy is `404 POLICY_NOT_FOUND`, a policy without a profile is
+`404 MASS_TORT_PROFILE_NOT_FOUND`, and a concurrent replace is
+`409 CONCURRENT_MODIFICATION`. The expert side of this contract lives in
+`eia-policy-expert`; this repository contains the domain adapter only.
 
 ## Verification
 
@@ -62,6 +83,11 @@ status/dueBefore/limit query, projection and summary mapping, ageing fallback,
 and preserved `400`/`404` problems; `PolicyReceivableControllerTest` covers the
 route, tenant/book handling, parameter parsing, and problem propagation, and
 `ReceivableServiceTest` covers status and limit normalization.
+`PolicyMassTortProfileClientTest` uses `MockRestServiceServer` for the profile
+tenant/DIRECT headers, the `id`/SPEC-column aliases, the replace payload, and
+preserved `400`/`404`/`409` problems; `PolicyMassTortProfileControllerTest`
+covers the read/replace routes, shape validation, tenant/book handling, and
+problem propagation.
 
 ## Known SPEC gaps in this slice
 
@@ -72,7 +98,6 @@ route, tenant/book handling, parameter parsing, and problem propagation, and
   is a synchronous expert call.
 - Approvals are represented by `approvedBy` / `approvalRef` identifiers supplied
   by the caller; no approval workflow service is integrated.
-- The domain does not proxy the mass tort profile, occurrences, claims,
-  reinsurance, billing accounts, billing instructions, credit notes, dunning,
-  disputes, commission statements, producer payables, or lineage projections
-  (SPEC 11.2.10/11.2.13) yet.
+- The domain does not proxy occurrences, claims, reinsurance, billing accounts,
+  billing instructions, credit notes, dunning, disputes, commission statements,
+  producer payables, or lineage projections (SPEC 11.2.10/11.2.13) yet.

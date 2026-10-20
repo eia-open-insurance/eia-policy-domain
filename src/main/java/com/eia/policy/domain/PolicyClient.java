@@ -364,6 +364,50 @@ public class PolicyClient {
     }
 
     // ------------------------------------------------------------------
+    // Mass tort profile (SPEC 11.2.11). The expert owns the tort catalog,
+    // the trigger and allocation vocabulary, the coverage-block period,
+    // and the profile state; the domain forwards the tenant and DIRECT
+    // book context on every call.
+    // ------------------------------------------------------------------
+
+    public MassTortProfile findMassTortProfile(UUID tenantId, UUID policyId) {
+        ExpertMassTortProfile view = call("get mass tort profile", () -> client.get()
+                .uri(uri -> uri.path("/internal/v1/policies/{id}/mass-tort-profile")
+                        .queryParam("tenantId", tenantId)
+                        .build(policyId))
+                .header(TENANT_HEADER, tenantId.toString())
+                .header(BookScope.BOOK_HEADER, BookScope.DIRECT)
+                .retrieve()
+                .body(ExpertMassTortProfile.class));
+        return toMassTortProfile(view);
+    }
+
+    public MassTortProfile updateMassTortProfile(UUID tenantId, UUID policyId,
+                                                 UpdateMassTortProfileCommand command) {
+        ExpertMassTortProfile view = call("update mass tort profile", () -> client.put()
+                .uri(uri -> uri.path("/internal/v1/policies/{id}/mass-tort-profile")
+                        .queryParam("tenantId", tenantId)
+                        .build(policyId))
+                .header(TENANT_HEADER, tenantId.toString())
+                .header(BookScope.BOOK_HEADER, BookScope.DIRECT)
+                .body(command)
+                .retrieve()
+                .body(ExpertMassTortProfile.class));
+        return toMassTortProfile(view);
+    }
+
+    private static MassTortProfile toMassTortProfile(ExpertMassTortProfile view) {
+        if (view == null) {
+            throw new ApiException(HttpStatus.BAD_GATEWAY, "EXPERT_BAD_RESPONSE",
+                    "Policy expert returned an empty response");
+        }
+        return new MassTortProfile(view.profileId(), view.policyId(), view.tortType(),
+                view.triggerType(), view.allocationMethod(), view.allocationNotes(),
+                view.coverageBlockStart(), view.coverageBlockEnd(), view.status(),
+                view.updatedAt());
+    }
+
+    // ------------------------------------------------------------------
     // Premium receivables: the cross-policy installment view that backs a
     // collections/ageing screen (SPEC 11.2.13). The expert owns the
     // projection and the tenant wall; the domain forwards the tenant and
@@ -746,6 +790,26 @@ public class PolicyClient {
             String status,
             Instant paidAt,
             UUID paymentId
+    ) {
+    }
+
+    /**
+     * Wire shape of the expert mass tort profile. The public projection is
+     * flat; the aliases accept the SPEC column names and the expert's
+     * {@code id} identity while the internal expert contract settles.
+     */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record ExpertMassTortProfile(
+            @JsonAlias({"id", "massTortProfileId"}) UUID profileId,
+            UUID policyId,
+            @JsonAlias({"directTortCode", "direct_tort_code", "tortCode"}) String tortType,
+            @JsonAlias({"triggerTheory", "trigger_theory"}) String triggerType,
+            @JsonAlias("allocation_method") String allocationMethod,
+            @JsonAlias("allocation_notes") String allocationNotes,
+            @JsonAlias("coverage_block_start") LocalDate coverageBlockStart,
+            @JsonAlias("coverage_block_end") LocalDate coverageBlockEnd,
+            String status,
+            @JsonAlias("updated_at") Instant updatedAt
     ) {
     }
 

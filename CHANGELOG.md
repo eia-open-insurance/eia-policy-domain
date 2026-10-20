@@ -55,6 +55,12 @@ The format is based on Keep a Changelog and the project uses Semantic Versioning
   paymentId}` and the response is `{items, totalAmount, overdueAmount, count}`.
   The tenant and `X-EIA-Book: DIRECT` are forwarded, the `limit` defaults to 20
   and is bounded to 1..200, and expert `400`/`404` problems are preserved.
+- `GET`/`PUT /api/v1/policies/{policyId}/mass-tort-profile` reads and replaces
+  the mass tort profile `{profileId, policyId, tortType, triggerType,
+  allocationMethod, allocationNotes, coverageBlockStart, coverageBlockEnd,
+  status, updatedAt}`. The tenant and `X-EIA-Book: DIRECT` are forwarded,
+  non-DIRECT books are `404 BOOK_SCOPE_VIOLATION`, and expert
+  `400`/`404`/`409` problems are preserved.
 
 ### Changed
 
