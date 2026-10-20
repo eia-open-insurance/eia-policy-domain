@@ -9,8 +9,9 @@ aggregate erosion, endorsements, insureds and locations, cancellation,
 reinstatement, and renewal into a successor term. Billing adds the plan and
 installment schedule projection under the same tenant and DIRECT-book context.
 A cross-policy premium-receivable read projects installments as receivables for
-the collections/ageing view, and the mass tort profile route reads and replaces
-the allocation basis that Direct Claims uses.
+the collections/ageing view, the installment dunning route records and reads the
+collections actions, and the mass tort profile route reads and replaces the
+allocation basis that Direct Claims uses.
 
 ## Structure
 
@@ -21,7 +22,10 @@ the allocation basis that Direct Claims uses.
 | `PolicyBillingController` / `PolicyBillingService` | Billing plan and installment routes; DIRECT-book guard |
 | `PolicyMassTortProfileController` / `PolicyMassTortProfileService` | Mass tort profile read/replace route; DIRECT-book guard |
 | `ReceivableController` / `ReceivableService` | Cross-policy `GET /api/v1/billing/installments`; status/limit normalization |
+| `DunningController` / `DunningService` | Installment `GET`/`POST .../dunning`; DIRECT-book guard |
 | `BillingPlan`, `Installment` | Public billing projections |
+| `DunningAction` | Public installment dunning projection |
+| `CreateDunningActionCommand` | Dunning action body; shape validation only |
 | `MassTortProfile` | Public mass tort profile projection |
 | `UpdateMassTortProfileCommand` | Mass tort profile replace body; shape validation only |
 | `Receivable`, `ReceivableSummary` | Public receivable projection and its totals |
@@ -43,6 +47,22 @@ insured-party context and a `daysPastDue` age. The domain recomputes totals,
 count, and `daysPastDue` only when the expert omits them, so the public summary
 stays coherent during rollout. The expert owns that projection; this repository
 contains the domain side of the contract only.
+
+## Installment dunning expert contract
+
+The domain forwards `GET` and `POST /internal/v1/billing/installments/{installmentId}/dunning`
+with `X-EIA-Tenant`, `X-EIA-Book: DIRECT`, and the `tenantId` query scope. `POST`
+sends `{level, channel, notes?}` and both methods return the flat action
+`{dunningId, installmentId, planId, policyId, level, channel, notes, status,
+sentAt}`; the domain accepts the expert's `id` alias for `dunningId`. `GET`
+returns the installment's dunning history newest first, or an empty array when
+none exists. The expert owns the level/channel vocabulary, the DUE/OVERDUE
+collectible-state rule, and the one-action-per-level constraint, so a settled
+installment is `409 INSTALLMENT_NOT_DUNNABLE` and a repeated level is
+`409 DUNNING_ALREADY_SENT`. A missing or cross-tenant installment is
+`404 INSTALLMENT_NOT_FOUND`, and every `400` is a preserved expert problem.
+The expert side of this contract lives in `eia-policy-expert`; this repository
+contains the domain adapter only.
 
 ## Mass tort profile expert contract
 
@@ -87,7 +107,11 @@ route, tenant/book handling, parameter parsing, and problem propagation, and
 tenant/DIRECT headers, the `id`/SPEC-column aliases, the replace payload, and
 preserved `400`/`404`/`409` problems; `PolicyMassTortProfileControllerTest`
 covers the read/replace routes, shape validation, tenant/book handling, and
-problem propagation.
+problem propagation. `PolicyDunningClientTest` uses `MockRestServiceServer` for
+the dunning tenant/DIRECT headers, the action payload, the `id` alias, and
+preserved `400`/`404`/`409` problems; `DunningControllerTest` covers the
+read/record routes, shape validation, tenant/book handling, and problem
+propagation, and `DunningServiceTest` covers the delegation.
 
 ## Known SPEC gaps in this slice
 
@@ -99,5 +123,5 @@ problem propagation.
 - Approvals are represented by `approvedBy` / `approvalRef` identifiers supplied
   by the caller; no approval workflow service is integrated.
 - The domain does not proxy occurrences, claims, reinsurance, billing accounts,
-  billing instructions, credit notes, dunning, disputes, commission statements,
-  producer payables, or lineage projections (SPEC 11.2.10/11.2.13) yet.
+  billing instructions, credit notes, disputes, commission statements, producer
+  payables, or lineage projections (SPEC 11.2.10/11.2.13) yet.

@@ -473,7 +473,8 @@ public class PolicyClient {
                 receivable.planNumber(), receivable.policyId(), receivable.policyNumber(),
                 receivable.insuredPartyId(), receivable.installmentNumber(), receivable.dueDate(),
                 receivable.amount(), receivable.currency(), receivable.status(), daysPastDue,
-                receivable.paidAt(), receivable.paymentId());
+                receivable.paidAt(), receivable.paymentId(), receivable.lastDunningLevel(),
+                receivable.lastDunningAt());
     }
 
     private static BigDecimal sum(List<Receivable> items, boolean overdueOnly) {
@@ -505,6 +506,61 @@ public class PolicyClient {
         }
         long days = ChronoUnit.DAYS.between(dueDate, LocalDate.now(ZoneOffset.UTC));
         return Math.max(days, 0L);
+    }
+
+    // ------------------------------------------------------------------
+    // Installment dunning (SPEC 11.2.13 collections and dunning). The
+    // expert owns the level/channel vocabulary, the transition rules, and
+    // the action history; the domain forwards the tenant and DIRECT book
+    // context on every call.
+    // ------------------------------------------------------------------
+
+    /** Reads the installment's dunning history, newest first. */
+    public List<DunningAction> findDunningActions(UUID tenantId, UUID installmentId) {
+        List<ExpertDunningAction> history = call("list billing dunning actions", () -> client.get()
+                .uri(uri -> uri.path(
+                                "/internal/v1/billing/installments/{installmentId}/dunning")
+                        .queryParam("tenantId", tenantId)
+                        .build(installmentId))
+                .header(TENANT_HEADER, tenantId.toString())
+                .header(BookScope.BOOK_HEADER, BookScope.DIRECT)
+                .retrieve()
+                .body(new ParameterizedTypeReference<List<ExpertDunningAction>>() {
+                }));
+        if (history == null) {
+            throw new ApiException(HttpStatus.BAD_GATEWAY, "EXPERT_BAD_RESPONSE",
+                    "Policy expert returned an empty response");
+        }
+        return history.stream()
+                .filter(Objects::nonNull)
+                .map(PolicyClient::toDunningAction)
+                .toList();
+    }
+
+    /** Records one dunning action against an installment. */
+    public DunningAction recordDunningAction(UUID tenantId, UUID installmentId,
+                                             CreateDunningActionCommand command) {
+        ExpertDunningAction view = call("record billing dunning action", () -> client.post()
+                .uri(uri -> uri.path(
+                                "/internal/v1/billing/installments/{installmentId}/dunning")
+                        .queryParam("tenantId", tenantId)
+                        .build(installmentId))
+                .header(TENANT_HEADER, tenantId.toString())
+                .header(BookScope.BOOK_HEADER, BookScope.DIRECT)
+                .body(command)
+                .retrieve()
+                .body(ExpertDunningAction.class));
+        return toDunningAction(view);
+    }
+
+    private static DunningAction toDunningAction(ExpertDunningAction view) {
+        if (view == null) {
+            throw new ApiException(HttpStatus.BAD_GATEWAY, "EXPERT_BAD_RESPONSE",
+                    "Policy expert returned an empty response");
+        }
+        return new DunningAction(view.dunningId(), view.installmentId(), view.planId(),
+                view.policyId(), view.level(), view.channel(), view.notes(), view.status(),
+                view.sentAt());
     }
 
     /**
@@ -841,7 +897,27 @@ public class PolicyClient {
             String status,
             Long daysPastDue,
             Instant paidAt,
-            UUID paymentId
+            UUID paymentId,
+            @JsonAlias("last_dunning_level") String lastDunningLevel,
+            @JsonAlias("last_dunning_at") Instant lastDunningAt
+    ) {
+    }
+
+    /**
+     * Wire shape of one expert dunning action. The expert's row id is accepted
+     * as {@code id} as well as the public {@code dunningId} name.
+     */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record ExpertDunningAction(
+            @JsonAlias("id") UUID dunningId,
+            UUID installmentId,
+            UUID planId,
+            UUID policyId,
+            String level,
+            String channel,
+            String notes,
+            String status,
+            Instant sentAt
     ) {
     }
 }

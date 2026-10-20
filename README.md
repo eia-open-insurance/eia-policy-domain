@@ -75,19 +75,39 @@ tenant's premium receivables across policies. A receivable is one scheduled
 installment enriched with its plan, policy, and insured-party context:
 `{installmentId, planId, planNumber, policyId, policyNumber, insuredPartyId,
 installmentNumber, dueDate, amount, currency, status, daysPastDue, paidAt,
-paymentId}`. The response is the `{items, totalAmount, overdueAmount, count}`
-summary, oldest due date first, then policy number and installment number.
+paymentId, lastDunningLevel, lastDunningAt}`. The response is the `{items,
+totalAmount, overdueAmount, count}` summary, oldest due date first, then policy
+number and installment number.
 
 `status` narrows the effective installment state (`DUE` or `OVERDUE`); a stored
 DUE installment past its due date is reported as OVERDUE without changing the
 row. `PAID`/`WAIVED` installments are not on the worklist, so the expert rejects
 those values with `400 INVALID_INSTALLMENT_STATUS`. `dueBefore` is an inclusive
 due-date cutoff in ISO form; `limit` defaults to 20 and must be between 1 and
-200. `daysPastDue` is zero unless the effective status is OVERDUE. The route
-requires `X-EIA-Tenant`, accepts an absent book for compatibility, rejects a
-supplied non-DIRECT book with `404 BOOK_SCOPE_VIOLATION`, and always forwards
-the tenant and `X-EIA-Book: DIRECT` to the Policy expert. Expert `400` and `404`
-problems reach the caller unchanged.
+200. `daysPastDue` is zero unless the effective status is OVERDUE.
+`lastDunningLevel` and `lastDunningAt` carry the most recent dunning action and
+are absent until one is recorded. The route requires `X-EIA-Tenant`, accepts an
+absent book for compatibility, rejects a supplied non-DIRECT book with `404
+BOOK_SCOPE_VIOLATION`, and always forwards the tenant and `X-EIA-Book: DIRECT`
+to the Policy expert. Expert `400` and `404` problems reach the caller
+unchanged.
+
+### Installment dunning
+
+`POST /api/v1/billing/installments/{installmentId}/dunning` records a dunning
+action from `{level, channel, notes?}` and returns `201` with the flat
+`DunningAction` projection `{dunningId, installmentId, planId, policyId, level,
+channel, notes, status, sentAt}`. `GET` on the same path returns the
+installment's dunning history as an array of those projections, newest first,
+and an empty array when nothing has been recorded. The Policy expert owns the
+level and channel vocabularies, the collectible-state rule, and the
+one-action-per-level constraint; an installment that is not DUE/OVERDUE is
+`409 INSTALLMENT_NOT_DUNNABLE`, a repeated level is `409 DUNNING_ALREADY_SENT`,
+and a missing or cross-tenant installment is `404 INSTALLMENT_NOT_FOUND`. The
+domain validates the request shape, forwards `X-EIA-Tenant` and `X-EIA-Book:
+DIRECT` on every call, and rejects a supplied non-DIRECT book with `404
+BOOK_SCOPE_VIOLATION`. Expert `400`, `404`, and `409` problems reach the caller
+unchanged.
 
 ### Policy renewal
 
@@ -186,6 +206,7 @@ The service listens on port 8084. Every request requires `X-EIA-Tenant`.
   `/insureds`, `/locations`, `/cancel`, `/reinstate`, `/renew`, `/billing`
 - `PATCH /api/v1/policies/{id}/billing/installments/{installmentId}`
 - `GET /api/v1/billing/installments?status=&dueBefore=&limit=`
+- `GET`/`POST /api/v1/billing/installments/{installmentId}/dunning`
 
 The expert base URL is configured with `eia.policy.expert-url` and defaults to `http://localhost:8083`.
 

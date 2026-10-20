@@ -14,7 +14,9 @@ import java.util.UUID;
  *
  * <p>{@code daysPastDue} is zero unless the installment is past its due date.
  * {@code paidAt} and {@code paymentId} are present only after the installment
- * is paid.</p>
+ * is paid. {@code lastDunningLevel} and {@code lastDunningAt} carry the most
+ * recent dunning action recorded for the installment and are absent until one
+ * is recorded.</p>
  */
 public record Receivable(
         UUID installmentId,
@@ -30,6 +32,8 @@ public record Receivable(
         String status,
         long daysPastDue,
         Instant paidAt,
-        UUID paymentId
+        UUID paymentId,
+        String lastDunningLevel,
+        Instant lastDunningAt
 ) {
 }

@@ -52,9 +52,17 @@ The format is based on Keep a Changelog and the project uses Semantic Versioning
   tenant's premium receivables across policies. Each item is
   `{installmentId, planId, planNumber, policyId, policyNumber, insuredPartyId,
   installmentNumber, dueDate, amount, currency, status, daysPastDue, paidAt,
-  paymentId}` and the response is `{items, totalAmount, overdueAmount, count}`.
-  The tenant and `X-EIA-Book: DIRECT` are forwarded, the `limit` defaults to 20
-  and is bounded to 1..200, and expert `400`/`404` problems are preserved.
+  paymentId, lastDunningLevel, lastDunningAt}` and the response is `{items,
+  totalAmount, overdueAmount, count}`. The tenant and `X-EIA-Book: DIRECT` are
+  forwarded, the `limit` defaults to 20 and is bounded to 1..200, and expert
+  `400`/`404` problems are preserved.
+- `POST`/`GET /api/v1/billing/installments/{installmentId}/dunning` records a
+  dunning action from `{level, channel, notes?}` and lists the installment's
+  dunning history newest first, both as the flat `{dunningId, installmentId,
+  planId, policyId, level, channel, notes, status, sentAt}` projection. The
+  tenant and `X-EIA-Book: DIRECT` are forwarded, non-DIRECT books are
+  `404 BOOK_SCOPE_VIOLATION`, and expert `400`/`404`/`409` problems are
+  preserved.
 - `GET`/`PUT /api/v1/policies/{policyId}/mass-tort-profile` reads and replaces
   the mass tort profile `{profileId, policyId, tortType, triggerType,
   allocationMethod, allocationNotes, coverageBlockStart, coverageBlockEnd,

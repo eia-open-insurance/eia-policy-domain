@@ -9,11 +9,13 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 
 import static org.hamcrest.Matchers.hasSize;
+import static org.hamcrest.Matchers.nullValue;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -67,7 +69,11 @@ class PolicyReceivableControllerTest {
                 .andExpect(jsonPath("$.items[0].amount").value("6000.0000"))
                 .andExpect(jsonPath("$.items[0].currency").value("USD"))
                 .andExpect(jsonPath("$.items[0].status").value("OVERDUE"))
-                .andExpect(jsonPath("$.items[0].daysPastDue").value(17));
+                .andExpect(jsonPath("$.items[0].daysPastDue").value(17))
+                .andExpect(jsonPath("$.items[0].lastDunningLevel").value("DUNNING_1"))
+                .andExpect(jsonPath("$.items[0].lastDunningAt")
+                        .value("2026-02-01T09:00:00Z"))
+                .andExpect(jsonPath("$.items[1].lastDunningLevel").value(nullValue()));
 
         verify(service).list(TENANT, "OVERDUE", LocalDate.of(2026, 2, 1), 5);
     }
@@ -182,11 +188,13 @@ class PolicyReceivableControllerTest {
                         new Receivable(INSTALLMENT_ID, PLAN_ID, "BP-2026-0001", POLICY_ID,
                                 "POL-2026-0000001", INSURED_PARTY_ID, 1,
                                 LocalDate.of(2026, 1, 15), new BigDecimal("6000.0000"), "USD",
-                                "OVERDUE", 17, null, null),
+                                "OVERDUE", 17, null, null, "DUNNING_1",
+                                Instant.parse("2026-02-01T09:00:00Z")),
                         new Receivable(UUID.fromString("dddddddd-dddd-7ddd-8ddd-dddddddddddd"),
                                 PLAN_ID, "BP-2026-0001", POLICY_ID, "POL-2026-0000001",
                                 INSURED_PARTY_ID, 2, LocalDate.of(2026, 7, 15),
-                                new BigDecimal("6000.0000"), "USD", "OVERDUE", 3, null, null)),
+                                new BigDecimal("6000.0000"), "USD", "OVERDUE", 3, null, null,
+                                null, null)),
                 new BigDecimal("12000.0000"), new BigDecimal("12000.0000"), 2);
     }
 }

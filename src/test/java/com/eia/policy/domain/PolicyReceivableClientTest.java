@@ -77,6 +77,8 @@ class PolicyReceivableClientTest {
         assertThat(overdue.daysPastDue()).isEqualTo(17);
         assertThat(overdue.paidAt()).isNull();
         assertThat(overdue.paymentId()).isNull();
+        assertThat(overdue.lastDunningLevel()).isEqualTo("DUNNING_1");
+        assertThat(overdue.lastDunningAt()).isEqualTo(Instant.parse("2026-02-01T09:00:00Z"));
 
         Receivable paid = summary.items().get(1);
         assertThat(paid.installmentId()).isEqualTo(SECOND_INSTALLMENT_ID);
@@ -84,6 +86,8 @@ class PolicyReceivableClientTest {
         assertThat(paid.daysPastDue()).isZero();
         assertThat(paid.paidAt()).isEqualTo(Instant.parse("2026-01-15T12:00:00Z"));
         assertThat(paid.paymentId()).isEqualTo(PAYMENT_ID);
+        assertThat(paid.lastDunningLevel()).isNull();
+        assertThat(paid.lastDunningAt()).isNull();
         server.verify();
     }
 
@@ -275,7 +279,8 @@ class PolicyReceivableClientTest {
                      "insuredPartyId": "%s", "installmentNumber": 1,
                      "dueDate": "2026-01-15", "amount": "6000.0000", "currency": "USD",
                      "status": "OVERDUE", "daysPastDue": 17, "paidAt": null,
-                     "paymentId": null},
+                     "paymentId": null, "lastDunningLevel": "DUNNING_1",
+                     "lastDunningAt": "2026-02-01T09:00:00Z"},
                     {"installmentId": "%s", "planId": "%s", "planNumber": "BP-2026-0001",
                      "policyId": "%s", "policyNumber": "POL-2026-0000001",
                      "insuredPartyId": "%s", "installmentNumber": 2,
