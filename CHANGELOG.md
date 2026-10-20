@@ -48,6 +48,13 @@ The format is based on Keep a Changelog and the project uses Semantic Versioning
   limitAmount?, limitCurrency?}`. The successor `PolicyDto` exposes
   `renewedFromPolicyId`, the tenant and `X-EIA-Book: DIRECT` are forwarded, and
   expert `400`/`404`/`409` problems are preserved.
+- `GET /api/v1/billing/installments?status=&dueBefore=&limit=` lists the
+  tenant's premium receivables across policies. Each item is
+  `{installmentId, planId, planNumber, policyId, policyNumber, insuredPartyId,
+  installmentNumber, dueDate, amount, currency, status, daysPastDue, paidAt,
+  paymentId}` and the response is `{items, totalAmount, overdueAmount, count}`.
+  The tenant and `X-EIA-Book: DIRECT` are forwarded, the `limit` defaults to 20
+  and is bounded to 1..100, and expert `400`/`404` problems are preserved.
 
 ### Changed
 

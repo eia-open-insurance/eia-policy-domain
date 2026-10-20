@@ -68,6 +68,26 @@ the expert's `{plan, installments}` view to the flat public projection. A
 supplied non-DIRECT book is `404 BOOK_SCOPE_VIOLATION`, and expert `400`, `404`,
 and `409` problems reach the caller unchanged.
 
+### Premium receivables
+
+`GET /api/v1/billing/installments?status=&dueBefore=&limit=` lists the
+tenant's premium receivables across policies. A receivable is one scheduled
+installment enriched with its plan, policy, and insured-party context:
+`{installmentId, planId, planNumber, policyId, policyNumber, insuredPartyId,
+installmentNumber, dueDate, amount, currency, status, daysPastDue, paidAt,
+paymentId}`. The response is the `{items, totalAmount, overdueAmount, count}`
+summary, oldest due date first.
+
+`status` filters the installment state (`DUE`, `OVERDUE`, `PAID`, `WAIVED`) and
+is forwarded upper-cased; `dueBefore` keeps installments whose due date is
+strictly before that ISO date; `limit` defaults to 20 and must be between 1 and
+100. `daysPastDue` is zero for settled installments and for due dates that have
+not passed. The route requires `X-EIA-Tenant`, accepts an absent book for
+compatibility, rejects a supplied non-DIRECT book with `404
+BOOK_SCOPE_VIOLATION`, and always forwards the tenant and `X-EIA-Book: DIRECT`
+to the Policy expert. Expert `400` and `404` problems reach the caller
+unchanged.
+
 ### Policy renewal
 
 `POST /api/v1/policies/{policyId}/renew` renews the policy into a successor
@@ -146,6 +166,7 @@ The service listens on port 8084. Every request requires `X-EIA-Tenant`.
 - `POST /api/v1/policies/{id}/coverages`, `/erosion`, `/endorsements`,
   `/insureds`, `/locations`, `/cancel`, `/reinstate`, `/renew`, `/billing`
 - `PATCH /api/v1/policies/{id}/billing/installments/{installmentId}`
+- `GET /api/v1/billing/installments?status=&dueBefore=&limit=`
 
 The expert base URL is configured with `eia.policy.expert-url` and defaults to `http://localhost:8083`.
 

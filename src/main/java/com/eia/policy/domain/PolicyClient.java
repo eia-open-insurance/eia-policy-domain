@@ -21,9 +21,12 @@ import org.springframework.web.client.RestClientResponseException;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.function.Supplier;
 
@@ -360,6 +363,109 @@ public class PolicyClient {
         return toInstallment(installment);
     }
 
+    // ------------------------------------------------------------------
+    // Premium receivables: the cross-policy installment view that backs a
+    // collections/ageing screen (SPEC 11.2.13). The expert owns the
+    // projection and the tenant wall; the domain forwards the tenant and
+    // the DIRECT book context on every read.
+    // ------------------------------------------------------------------
+
+    /**
+     * Lists the tenant's premium receivables, optionally narrowed by
+     * installment {@code status} and/or a due date strictly before
+     * {@code dueBefore}. The expert applies the filters, ordering, and limit;
+     * the domain normalizes the request shape and maps the wire projection.
+     */
+    public ReceivableSummary findReceivables(UUID tenantId, String status, LocalDate dueBefore,
+                                             int limit) {
+        ExpertReceivableSummary view = call("list premium receivables", () -> client.get()
+                .uri(uri -> {
+                    uri.path("/internal/v1/billing/installments")
+                            .queryParam("tenantId", tenantId);
+                    if (status != null) {
+                        uri.queryParam("status", status);
+                    }
+                    if (dueBefore != null) {
+                        uri.queryParam("dueBefore", dueBefore);
+                    }
+                    uri.queryParam("limit", limit);
+                    return uri.build();
+                })
+                .header(TENANT_HEADER, tenantId.toString())
+                .header(BookScope.BOOK_HEADER, BookScope.DIRECT)
+                .retrieve()
+                .body(ExpertReceivableSummary.class));
+        return toReceivableSummary(view);
+    }
+
+    /**
+     * The expert returns the receivables with their totals. Totals, the count,
+     * and {@code daysPastDue} are recomputed only when the expert omits them,
+     * so an older projection still produces a coherent public summary.
+     */
+    private static ReceivableSummary toReceivableSummary(ExpertReceivableSummary view) {
+        if (view == null) {
+            throw new ApiException(HttpStatus.BAD_GATEWAY, "EXPERT_BAD_RESPONSE",
+                    "Policy expert returned an empty response");
+        }
+        List<Receivable> items = view.items() == null ? List.of()
+                : view.items().stream()
+                        .filter(Objects::nonNull)
+                        .map(PolicyClient::toReceivable)
+                        .toList();
+        BigDecimal totalAmount = view.totalAmount() == null
+                ? sum(items, false) : view.totalAmount();
+        BigDecimal overdueAmount = view.overdueAmount() == null
+                ? sum(items, true) : view.overdueAmount();
+        int count = view.count() == null ? items.size() : view.count();
+        return new ReceivableSummary(items, totalAmount, overdueAmount, count);
+    }
+
+    private static Receivable toReceivable(ExpertReceivable receivable) {
+        int daysPastDue = receivable.daysPastDue() == null
+                ? daysPastDue(receivable.dueDate(), receivable.status())
+                : receivable.daysPastDue();
+        return new Receivable(receivable.installmentId(), receivable.planId(),
+                receivable.planNumber(), receivable.policyId(), receivable.policyNumber(),
+                receivable.insuredPartyId(), receivable.installmentNumber(), receivable.dueDate(),
+                receivable.amount(), receivable.currency(), receivable.status(), daysPastDue,
+                receivable.paidAt(), receivable.paymentId());
+    }
+
+    private static BigDecimal sum(List<Receivable> items, boolean overdueOnly) {
+        return items.stream()
+                .filter(item -> !overdueOnly || isOverdue(item))
+                .map(Receivable::amount)
+                .filter(Objects::nonNull)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
+    private static boolean isOverdue(Receivable receivable) {
+        if ("PAID".equalsIgnoreCase(receivable.status())
+                || "WAIVED".equalsIgnoreCase(receivable.status())) {
+            return false;
+        }
+        return "OVERDUE".equalsIgnoreCase(receivable.status())
+                || receivable.daysPastDue() > 0;
+    }
+
+    /**
+     * Ageing fallback for an expert projection that predates
+     * {@code daysPastDue}: settled installments and future due dates are not
+     * past due, everything else counts whole days from the due date.
+     */
+    static int daysPastDue(LocalDate dueDate, String status) {
+        if (dueDate == null || "PAID".equalsIgnoreCase(status)
+                || "WAIVED".equalsIgnoreCase(status)) {
+            return 0;
+        }
+        long days = ChronoUnit.DAYS.between(dueDate, LocalDate.now(ZoneOffset.UTC));
+        if (days <= 0) {
+            return 0;
+        }
+        return days > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) days;
+    }
+
     /**
      * The expert returns the plan under {@code plan} plus a separate ordered
      * installment list; the public projection is flat.
@@ -641,6 +747,38 @@ public class PolicyClient {
             LocalDate dueDate,
             BigDecimal amount,
             String status,
+            Instant paidAt,
+            UUID paymentId
+    ) {
+    }
+
+    /**
+     * Wire shape of the expert premium-receivable summary. The expert may omit
+     * the derived members; the domain then recomputes them from the items.
+     */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record ExpertReceivableSummary(
+            List<ExpertReceivable> items,
+            BigDecimal totalAmount,
+            BigDecimal overdueAmount,
+            Integer count
+    ) {
+    }
+
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record ExpertReceivable(
+            @JsonAlias("id") UUID installmentId,
+            UUID planId,
+            String planNumber,
+            UUID policyId,
+            String policyNumber,
+            UUID insuredPartyId,
+            int installmentNumber,
+            LocalDate dueDate,
+            BigDecimal amount,
+            String currency,
+            String status,
+            Integer daysPastDue,
             Instant paidAt,
             UUID paymentId
     ) {
