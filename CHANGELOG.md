@@ -54,7 +54,7 @@ The format is based on Keep a Changelog and the project uses Semantic Versioning
   installmentNumber, dueDate, amount, currency, status, daysPastDue, paidAt,
   paymentId}` and the response is `{items, totalAmount, overdueAmount, count}`.
   The tenant and `X-EIA-Book: DIRECT` are forwarded, the `limit` defaults to 20
-  and is bounded to 1..100, and expert `400`/`404` problems are preserved.
+  and is bounded to 1..200, and expert `400`/`404` problems are preserved.
 
 ### Changed
 

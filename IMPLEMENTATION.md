@@ -31,9 +31,10 @@ the collections/ageing view.
 
 The domain forwards `GET /internal/v1/billing/installments` with
 `X-EIA-Tenant` and `X-EIA-Book: DIRECT`, the `tenantId` query scope, and the
-optional `status` and `dueBefore` filters plus the normalized `limit`. The
-expert returns `{items, totalAmount, overdueAmount, count}` with items ordered
-by due date and installment number, each item carrying the plan, policy, and
+optional `status` (`DUE` or `OVERDUE`) and inclusive `dueBefore` filters plus
+the normalized `limit` (1..200, default 20). The expert returns
+`{items, totalAmount, overdueAmount, count}` with items ordered by due date,
+policy number, and installment number, each item carrying the plan, policy, and
 insured-party context and a `daysPastDue` age. The domain recomputes totals,
 count, and `daysPastDue` only when the expert omits them, so the public summary
 stays coherent during rollout. The expert owns that projection; this repository

@@ -17,7 +17,7 @@ import java.util.UUID;
 @Service
 public class ReceivableService {
     static final int DEFAULT_LIMIT = 20;
-    static final int MAX_LIMIT = 100;
+    static final int MAX_LIMIT = 200;
 
     private final PolicyClient client;
 

@@ -44,16 +44,16 @@ class ReceivableServiceTest {
 
     @Test
     void acceptsTheMaximumLimit() {
-        when(client.findReceivables(TENANT, null, null, 100))
+        when(client.findReceivables(TENANT, null, null, 200))
                 .thenReturn(new ReceivableSummary(List.of(), null, null, 0));
 
-        service.list(TENANT, null, null, 100);
-        verify(client).findReceivables(TENANT, null, null, 100);
+        service.list(TENANT, null, null, 200);
+        verify(client).findReceivables(TENANT, null, null, 200);
     }
 
     @Test
-    void rejectsLimitsOutsideOneToHundred() {
-        for (Integer limit : new Integer[]{0, -1, 101}) {
+    void rejectsLimitsOutsideOneToTwoHundred() {
+        for (Integer limit : new Integer[]{0, -1, 201}) {
             assertThatThrownBy(() -> service.list(TENANT, null, null, limit))
                     .isInstanceOf(ApiException.class)
                     .satisfies(ex -> {

@@ -76,17 +76,18 @@ installment enriched with its plan, policy, and insured-party context:
 `{installmentId, planId, planNumber, policyId, policyNumber, insuredPartyId,
 installmentNumber, dueDate, amount, currency, status, daysPastDue, paidAt,
 paymentId}`. The response is the `{items, totalAmount, overdueAmount, count}`
-summary, oldest due date first.
+summary, oldest due date first, then policy number and installment number.
 
-`status` filters the installment state (`DUE`, `OVERDUE`, `PAID`, `WAIVED`) and
-is forwarded upper-cased; `dueBefore` keeps installments whose due date is
-strictly before that ISO date; `limit` defaults to 20 and must be between 1 and
-100. `daysPastDue` is zero for settled installments and for due dates that have
-not passed. The route requires `X-EIA-Tenant`, accepts an absent book for
-compatibility, rejects a supplied non-DIRECT book with `404
-BOOK_SCOPE_VIOLATION`, and always forwards the tenant and `X-EIA-Book: DIRECT`
-to the Policy expert. Expert `400` and `404` problems reach the caller
-unchanged.
+`status` narrows the effective installment state (`DUE` or `OVERDUE`); a stored
+DUE installment past its due date is reported as OVERDUE without changing the
+row. `PAID`/`WAIVED` installments are not on the worklist, so the expert rejects
+those values with `400 INVALID_INSTALLMENT_STATUS`. `dueBefore` is an inclusive
+due-date cutoff in ISO form; `limit` defaults to 20 and must be between 1 and
+200. `daysPastDue` is zero unless the effective status is OVERDUE. The route
+requires `X-EIA-Tenant`, accepts an absent book for compatibility, rejects a
+supplied non-DIRECT book with `404 BOOK_SCOPE_VIOLATION`, and always forwards
+the tenant and `X-EIA-Book: DIRECT` to the Policy expert. Expert `400` and `404`
+problems reach the caller unchanged.
 
 ### Policy renewal
 

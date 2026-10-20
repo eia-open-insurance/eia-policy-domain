@@ -371,8 +371,8 @@ public class PolicyClient {
     // ------------------------------------------------------------------
 
     /**
-     * Lists the tenant's premium receivables, optionally narrowed by
-     * installment {@code status} and/or a due date strictly before
+     * Lists the tenant's premium receivables, optionally narrowed by effective
+     * installment {@code status} and/or a due date on or before
      * {@code dueBefore}. The expert applies the filters, ordering, and limit;
      * the domain normalizes the request shape and maps the wire projection.
      */
@@ -422,7 +422,7 @@ public class PolicyClient {
     }
 
     private static Receivable toReceivable(ExpertReceivable receivable) {
-        int daysPastDue = receivable.daysPastDue() == null
+        long daysPastDue = receivable.daysPastDue() == null
                 ? daysPastDue(receivable.dueDate(), receivable.status())
                 : receivable.daysPastDue();
         return new Receivable(receivable.installmentId(), receivable.planId(),
@@ -454,16 +454,13 @@ public class PolicyClient {
      * {@code daysPastDue}: settled installments and future due dates are not
      * past due, everything else counts whole days from the due date.
      */
-    static int daysPastDue(LocalDate dueDate, String status) {
+    static long daysPastDue(LocalDate dueDate, String status) {
         if (dueDate == null || "PAID".equalsIgnoreCase(status)
                 || "WAIVED".equalsIgnoreCase(status)) {
-            return 0;
+            return 0L;
         }
         long days = ChronoUnit.DAYS.between(dueDate, LocalDate.now(ZoneOffset.UTC));
-        if (days <= 0) {
-            return 0;
-        }
-        return days > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) days;
+        return Math.max(days, 0L);
     }
 
     /**
@@ -778,7 +775,7 @@ public class PolicyClient {
             BigDecimal amount,
             String currency,
             String status,
-            Integer daysPastDue,
+            Long daysPastDue,
             Instant paidAt,
             UUID paymentId
     ) {

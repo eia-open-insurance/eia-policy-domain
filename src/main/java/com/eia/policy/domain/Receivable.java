@@ -12,9 +12,9 @@ import java.util.UUID;
  * plan, policy, and insured-party context needed by a collections view
  * (SPEC 11.2.13 {@code premium_receivable}).
  *
- * <p>{@code daysPastDue} is zero for settled installments and for an
- * installment whose due date has not passed. {@code paidAt} and
- * {@code paymentId} are present only after the installment is paid.</p>
+ * <p>{@code daysPastDue} is zero unless the installment is past its due date.
+ * {@code paidAt} and {@code paymentId} are present only after the installment
+ * is paid.</p>
  */
 public record Receivable(
         UUID installmentId,
@@ -28,7 +28,7 @@ public record Receivable(
         @JsonFormat(shape = JsonFormat.Shape.STRING) BigDecimal amount,
         String currency,
         String status,
-        int daysPastDue,
+        long daysPastDue,
         Instant paidAt,
         UUID paymentId
 ) {
