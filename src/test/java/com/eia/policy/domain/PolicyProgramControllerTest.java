@@ -174,6 +174,6 @@ class PolicyProgramControllerTest {
                 LocalDate.of(2026, 1, 1), LocalDate.of(2027, 1, 1),
                 new java.math.BigDecimal("125000.0000"), "USD",
                 new java.math.BigDecimal("2000000.0000"), "USD", version, now, now, null,
-                programId);
+                programId, null);
     }
 }

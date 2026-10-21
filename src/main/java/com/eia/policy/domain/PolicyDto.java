@@ -24,5 +24,6 @@ public record PolicyDto(
         Instant createdAt,
         Instant updatedAt,
         UUID renewedFromPolicyId,
-        UUID programId
+        UUID programId,
+        UUID legalEntityId
 ) {}

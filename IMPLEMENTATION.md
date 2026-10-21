@@ -11,9 +11,10 @@ installment schedule projection under the same tenant and DIRECT-book context.
 A cross-policy premium-receivable read projects installments as receivables for
 the collections/ageing view, the installment dunning route records and reads the
 collections actions, the credit-note route requests, lists, and advances the
-billing credits raised by cancellations, endorsements, and audits, and the mass
+billing credits raised by cancellations, endorsements, and audits, the mass
 tort profile route reads and replaces the allocation basis that Direct Claims
-uses.
+uses, and the legal entity catalog exposes the carriers and service companies
+that issue or support the DIRECT book.
 
 ## Structure
 
@@ -26,7 +27,12 @@ uses.
 | `ReceivableController` / `ReceivableService` | Cross-policy `GET /api/v1/billing/installments`; status/limit normalization |
 | `DunningController` / `DunningService` | Installment `GET`/`POST .../dunning`; DIRECT-book guard |
 | `PolicyCreditNoteController` / `PolicyCreditNoteService` | Policy `GET`/`POST .../credit-notes` and `PATCH .../status`; DIRECT-book guard |
+| `LegalEntityController` / `LegalEntityService` | Legal entity `POST`/`GET` catalog routes; DIRECT-book guard |
+| `PolicyLegalEntityController` / `PolicyLegalEntityService` | Policy issuer `PATCH` route; DIRECT-book guard |
 | `BillingPlan`, `Installment` | Public billing projections |
+| `LegalEntityDto` | Public legal entity projection |
+| `CreateLegalEntityCommand` | Legal entity create body; shape validation only |
+| `UpdatePolicyLegalEntityCommand` | Policy issuer body; shape validation only |
 | `DunningAction` | Public installment dunning projection |
 | `CreateDunningActionCommand` | Dunning action body; shape validation only |
 | `CreditNote` | Public credit-note projection |
@@ -106,6 +112,29 @@ missing policy is `404 POLICY_NOT_FOUND`, a policy without a profile is
 `409 CONCURRENT_MODIFICATION`. The expert side of this contract lives in
 `eia-policy-expert`; this repository contains the domain adapter only.
 
+## Legal entity expert contract
+
+The domain forwards `GET` and `POST /internal/v1/legal-entities` and
+`GET /internal/v1/legal-entities/{legalEntityId}` with `X-EIA-Tenant`,
+`X-EIA-Book: DIRECT`, and the `tenantId` query scope. `POST` sends
+`{code, name, entityType, jurisdiction, regulator?, licenseNumber?}`; the expert
+returns the flat entity `{legalEntityId, code, name, entityType, jurisdiction,
+regulator, licenseNumber, status, createdAt}`; the domain accepts the expert's
+`id` identity and the SPEC column aliases (`entity_code`, `legal_name`,
+`entity_type`, `domicile_country`, `license_number`, `created_at`). `GET`
+returns the tenant's entities as an array, or an empty array when none exists.
+`PATCH /internal/v1/policies/{policyId}/legal-entity` sends `{legalEntityId}`
+and returns the updated `PolicyDto` with the expert `ETag`; the domain exposes
+the new `legalEntityId` on every `PolicyDto` route and the per-tenant filtered
+policy read maps `legal_entity_id` from the policy row. The expert owns the
+entity code, the entity-type and status vocabularies, tenant-scoped code
+uniqueness, the regulator and license rules, and the policy issuer and capacity
+rules, so a bad entity type is a preserved `400`, a missing or cross-tenant
+entity is `404 LEGAL_ENTITY_NOT_FOUND`, a duplicate code is
+`409 DUPLICATE_LEGAL_ENTITY_CODE`, and a stale assignment is
+`409 CONCURRENT_MODIFICATION`. The expert side of this contract lives in
+`eia-policy-expert`; this repository contains the domain adapter only.
+
 ## Verification
 
 ```powershell
@@ -143,6 +172,13 @@ aliases, the newest-first list, and preserved `400`/`404`/`409` problems;
 `PolicyCreditNoteControllerTest` covers the list/request/status routes, shape
 validation, tenant/book handling, and problem propagation, and
 `PolicyCreditNoteServiceTest` covers the delegation.
+`LegalEntityClientTest` uses `MockRestServiceServer` for the legal entity
+tenant/DIRECT headers, the create payload, the `id`/SPEC-column aliases, the
+issuer assignment, and preserved `400`/`404`/`409` problems;
+`LegalEntityControllerTest` covers the create/list/read routes, shape
+validation, tenant/book handling, and problem propagation, and
+`PolicyLegalEntityControllerTest` covers the issuer assignment route, body
+validation, tenant/book handling, ETag echo, and problem propagation.
 
 ## Known SPEC gaps in this slice
 

@@ -25,7 +25,7 @@ public class PolicyQueryRepository {
             SELECT id, tenant_id, policy_number, product_code, insured_party_id, status,
                    effective_date, expiration_date, premium_amount, premium_currency,
                    limit_amount, limit_currency, version, created_at, updated_at,
-                   renewed_from_policy_id, program_id
+                   renewed_from_policy_id, program_id, legal_entity_id
               FROM policy
             """;
 
@@ -46,7 +46,8 @@ public class PolicyQueryRepository {
             rs.getTimestamp("created_at").toInstant(),
             rs.getTimestamp("updated_at").toInstant(),
             rs.getObject("renewed_from_policy_id", UUID.class),
-            rs.getObject("program_id", UUID.class)
+            rs.getObject("program_id", UUID.class),
+            rs.getObject("legal_entity_id", UUID.class)
     );
 
     private final JdbcTemplate jdbc;

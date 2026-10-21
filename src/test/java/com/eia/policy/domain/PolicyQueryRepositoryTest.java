@@ -51,6 +51,7 @@ class PolicyQueryRepositoryTest {
                     limit_currency CHAR(3) NOT NULL,
                     renewed_from_policy_id UUID,
                     program_id UUID,
+                    legal_entity_id UUID,
                     version INTEGER NOT NULL DEFAULT 0,
                     created_at TIMESTAMP WITH TIME ZONE NOT NULL,
                     updated_at TIMESTAMP WITH TIME ZONE NOT NULL
@@ -101,6 +102,18 @@ class PolicyQueryRepositoryTest {
 
         assertThat(page.items()).singleElement().satisfies(policy ->
                 assertThat(policy.programId()).isEqualTo(programId));
+    }
+
+    @Test
+    void mapsTheIssuingLegalEntityFromThePolicyRow() {
+        UUID legalEntityId = UUID.fromString("66666666-6666-7666-8666-666666666666");
+        policy(1, TENANT, PARTY, "DRAFT", BASE);
+        jdbc.update("UPDATE policy SET legal_entity_id = ? WHERE id = ?", legalEntityId, id(1));
+
+        PolicyPageData page = repository.findPageByInsuredParty(TENANT, PARTY, 0, 20);
+
+        assertThat(page.items()).singleElement().satisfies(policy ->
+                assertThat(policy.legalEntityId()).isEqualTo(legalEntityId));
     }
 
     @Test

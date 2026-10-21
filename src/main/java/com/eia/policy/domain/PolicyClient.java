@@ -494,6 +494,93 @@ public class PolicyClient {
     }
 
     // ------------------------------------------------------------------
+    // Legal entity catalog and issuing-legal-entity membership (SPEC
+    // 10.11.2, 11.2.16). The expert owns the entity code, the entity-type
+    // and status vocabularies, tenant-scoped uniqueness, and the license
+    // rules; the domain forwards the tenant and DIRECT book context on
+    // every call.
+    // ------------------------------------------------------------------
+
+    public List<LegalEntityDto> findLegalEntities(UUID tenantId) {
+        List<ExpertLegalEntity> legalEntities = call("list legal entities", () -> client.get()
+                .uri(uri -> uri.path("/internal/v1/legal-entities")
+                        .queryParam("tenantId", tenantId)
+                        .build())
+                .header(TENANT_HEADER, tenantId.toString())
+                .header(BookScope.BOOK_HEADER, BookScope.DIRECT)
+                .retrieve()
+                .body(new ParameterizedTypeReference<List<ExpertLegalEntity>>() {
+                }));
+        if (legalEntities == null) {
+            throw new ApiException(HttpStatus.BAD_GATEWAY, "EXPERT_BAD_RESPONSE",
+                    "Policy expert returned an empty response");
+        }
+        return legalEntities.stream()
+                .filter(Objects::nonNull)
+                .map(PolicyClient::toLegalEntity)
+                .toList();
+    }
+
+    public LegalEntityDto findLegalEntity(UUID tenantId, UUID legalEntityId) {
+        ExpertLegalEntity legalEntity = call("get legal entity", () -> client.get()
+                .uri(uri -> uri.path("/internal/v1/legal-entities/{legalEntityId}")
+                        .queryParam("tenantId", tenantId)
+                        .build(legalEntityId))
+                .header(TENANT_HEADER, tenantId.toString())
+                .header(BookScope.BOOK_HEADER, BookScope.DIRECT)
+                .retrieve()
+                .body(ExpertLegalEntity.class));
+        return toLegalEntity(legalEntity);
+    }
+
+    public LegalEntityDto createLegalEntity(UUID tenantId, CreateLegalEntityCommand command) {
+        ExpertLegalEntity legalEntity = call("create legal entity", () -> client.post()
+                .uri(uri -> uri.path("/internal/v1/legal-entities")
+                        .queryParam("tenantId", tenantId)
+                        .build())
+                .header(TENANT_HEADER, tenantId.toString())
+                .header(BookScope.BOOK_HEADER, BookScope.DIRECT)
+                .body(command)
+                .retrieve()
+                .body(ExpertLegalEntity.class));
+        return toLegalEntity(legalEntity);
+    }
+
+    /**
+     * Assigns the policy's issuing legal entity. SPEC LE-01 requires exactly one
+     * issuer, so the expert rejects a null member; the updated policy carries
+     * the new {@code legalEntityId} and the expert's aggregate ETag.
+     */
+    public Mutation<PolicyDto> updatePolicyLegalEntity(UUID tenantId, UUID policyId,
+                                                       UUID legalEntityId) {
+        ResponseEntity<PolicyDto> response = callEntity("assign policy legal entity",
+                () -> client.patch()
+                        .uri(uri -> uri.path("/internal/v1/policies/{policyId}/legal-entity")
+                                .queryParam("tenantId", tenantId)
+                                .build(policyId))
+                        .header(TENANT_HEADER, tenantId.toString())
+                        .header(BookScope.BOOK_HEADER, BookScope.DIRECT)
+                        .body(new ExpertPolicyLegalEntityRequest(legalEntityId))
+                        .retrieve()
+                        .toEntity(PolicyDto.class));
+        if (response.getBody() == null) {
+            throw new ApiException(HttpStatus.BAD_GATEWAY, "EXPERT_BAD_RESPONSE",
+                    "Policy expert returned an empty response");
+        }
+        return Mutation.of(response);
+    }
+
+    private static LegalEntityDto toLegalEntity(ExpertLegalEntity view) {
+        if (view == null) {
+            throw new ApiException(HttpStatus.BAD_GATEWAY, "EXPERT_BAD_RESPONSE",
+                    "Policy expert returned an empty response");
+        }
+        return new LegalEntityDto(view.legalEntityId(), view.code(), view.name(),
+                view.entityType(), view.jurisdiction(), view.regulator(), view.licenseNumber(),
+                view.status(), view.createdAt());
+    }
+
+    // ------------------------------------------------------------------
     // Premium receivables: the cross-policy installment view that backs a
     // collections/ageing screen (SPEC 11.2.13). The expert owns the
     // projection and the tenant wall; the domain forwards the tenant and
@@ -1118,5 +1205,28 @@ public class PolicyClient {
             @JsonAlias("applied_at") Instant appliedAt,
             @JsonAlias("created_at") Instant createdAt
     ) {
+    }
+
+    /**
+     * Wire shape of one expert legal entity. The public projection is flat; the
+     * aliases accept the expert's {@code id} identity and the SPEC column names
+     * while the internal expert contract settles.
+     */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record ExpertLegalEntity(
+            @JsonAlias({"id", "legal_entity_id"}) UUID legalEntityId,
+            @JsonAlias({"entity_code", "entityCode"}) String code,
+            @JsonAlias({"legal_name", "legalName"}) String name,
+            @JsonAlias("entity_type") String entityType,
+            @JsonAlias({"domicile_country", "domicileCountry"}) String jurisdiction,
+            String regulator,
+            @JsonAlias("license_number") String licenseNumber,
+            @JsonAlias({"entity_status", "legal_entity_status"}) String status,
+            @JsonAlias("created_at") Instant createdAt
+    ) {
+    }
+
+    /** Wire shape of the policy legal entity assignment command. */
+    record ExpertPolicyLegalEntityRequest(UUID legalEntityId) {
     }
 }

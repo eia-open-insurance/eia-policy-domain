@@ -181,6 +181,30 @@ shape and the effective-date ordering, forwards `X-EIA-Tenant` and
 `404 BOOK_SCOPE_VIOLATION`. Expert `400`, `404`, and `409` problems reach the
 caller unchanged; a missing program is `404 PROGRAM_NOT_FOUND`.
 
+### Legal entities
+
+`POST /api/v1/legal-entities` registers a legal entity from `{code, name,
+entityType, jurisdiction, regulator?, licenseNumber?}` and returns `201` with
+the flat projection `{legalEntityId, code, name, entityType, jurisdiction,
+regulator, licenseNumber, status, createdAt}`. `GET /api/v1/legal-entities`
+returns the tenant's legal entities as an array, and
+`GET /api/v1/legal-entities/{legalEntityId}` returns one.
+`PATCH /api/v1/policies/{policyId}/legal-entity` accepts `{legalEntityId}`,
+assigns the policy's issuing legal entity, and returns the updated `PolicyDto`
+with its expert `ETag`; every policy must reference one issuer (SPEC LE-01), so
+the assignment cannot be cleared.
+
+The Policy expert owns tenant-scoped entity-code uniqueness, the entity-type
+and status vocabularies, the regulator and license rules, and the policy
+issuer and capacity rules. The domain validates the request shape, forwards
+`X-EIA-Tenant` and `X-EIA-Book: DIRECT` on every call, and rejects a supplied
+non-DIRECT book with `404 BOOK_SCOPE_VIOLATION`. Expert `400`, `404`, and `409`
+problems reach the caller unchanged; a missing legal entity is
+`404 LEGAL_ENTITY_NOT_FOUND`, a duplicate code is
+`409 DUPLICATE_LEGAL_ENTITY_CODE`, and a stale policy update is
+`409 CONCURRENT_MODIFICATION`. `PolicyDto` now exposes `legalEntityId` on
+policy reads and writes.
+
 ### Filtering the policy list by insured party
 
 `GET /api/v1/policies?insuredPartyId={partyId}&page=0&size=5` filters the
@@ -247,6 +271,8 @@ The service listens on port 8084. Every request requires `X-EIA-Tenant`.
 - `GET`/`PUT /api/v1/policies/{id}/mass-tort-profile`
 - `POST`/`GET /api/v1/programs`, `GET /api/v1/programs/{programId}`
 - `PATCH /api/v1/policies/{policyId}/program`
+- `POST`/`GET /api/v1/legal-entities`, `GET /api/v1/legal-entities/{legalEntityId}`
+- `PATCH /api/v1/policies/{policyId}/legal-entity`
 - `POST /api/v1/policies/{id}/coverages`, `/erosion`, `/endorsements`,
   `/insureds`, `/locations`, `/cancel`, `/reinstate`, `/renew`, `/billing`
 - `PATCH /api/v1/policies/{id}/billing/installments/{installmentId}`
