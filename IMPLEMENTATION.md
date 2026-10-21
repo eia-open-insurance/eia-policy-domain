@@ -29,7 +29,7 @@ that issue or support the DIRECT book.
 | `PolicyCreditNoteController` / `PolicyCreditNoteService` | Policy `GET`/`POST .../credit-notes` and `PATCH .../status`; DIRECT-book guard |
 | `LegalEntityController` / `LegalEntityService` | Legal entity `POST`/`GET` catalog routes; DIRECT-book guard |
 | `PolicyLegalEntityController` / `PolicyLegalEntityService` | Policy issuer `PATCH` route; DIRECT-book guard |
-| `BillingPlan`, `Installment` | Public billing projections |
+| `BillingPlan`, `BillingSummary`, `Installment` | Public billing projections and their credited/outstanding totals |
 | `LegalEntityDto` | Public legal entity projection |
 | `CreateLegalEntityCommand` | Legal entity create body; shape validation only |
 | `UpdatePolicyLegalEntityCommand` | Policy issuer body; shape validation only |
@@ -37,7 +37,7 @@ that issue or support the DIRECT book.
 | `CreateDunningActionCommand` | Dunning action body; shape validation only |
 | `CreditNote` | Public credit-note projection |
 | `CreateCreditNoteCommand` | Credit-note request body; shape validation only |
-| `UpdateCreditNoteStatusCommand` | Credit-note status body; shape validation only |
+| `UpdateCreditNoteStatusCommand` | Credit-note status body; optional APPLIED installment |
 | `MassTortProfile` | Public mass tort profile projection |
 | `UpdateMassTortProfileCommand` | Mass tort profile replace body; shape validation only |
 | `Receivable`, `ReceivableSummary` | Public receivable projection and its totals |
@@ -47,6 +47,22 @@ that issue or support the DIRECT book.
 | `PolicyLifecycle` | Status transition table |
 | `ItemPage`, `Mutation`, `EntityTags`, `Pagination`, `PageLinks` | Shared response and concurrency helpers |
 
+## Billing expert contract
+
+The domain forwards `GET` and `POST /internal/v1/policies/{policyId}/billing`
+and `PATCH /internal/v1/policies/{policyId}/billing/installments/{installmentId}`
+with `X-EIA-Tenant`, `X-EIA-Book: DIRECT`, and the `tenantId` query scope. The
+expert returns `{plan, installments, summary}`. Each installment carries the
+gross `amount`, the `creditedAmount` accumulated from applied credit notes, and
+the derived `outstandingAmount`; the summary is `{totalAmount, paidAmount,
+waivedAmount, creditedAmount, outstandingAmount, overdueAmount, currency,
+installmentCount}` and nets the credited premium out of the collectible
+balance. The domain flattens the plan into the public projection and always
+publishes a summary, merging the expert values and deriving what an older
+expert omits from the plan total and installment rows. The expert owns the
+schedule, the split, the credit application, and the payment/waiver rules; this
+repository contains the domain adapter only.
+
 ## Premium-receivable expert contract
 
 The domain forwards `GET /internal/v1/billing/installments` with
@@ -55,8 +71,12 @@ optional `status` (`DUE` or `OVERDUE`) and inclusive `dueBefore` filters plus
 the normalized `limit` (1..200, default 20). The expert returns
 `{items, totalAmount, overdueAmount, count}` with items ordered by due date,
 policy number, and installment number, each item carrying the plan, policy, and
-insured-party context and a `daysPastDue` age. The domain recomputes totals,
-count, and `daysPastDue` only when the expert omits them, so the public summary
+insured-party context, a `daysPastDue` age, the gross `amount`, the
+`creditedAmount`, and the `outstandingAmount`. `amount` stays gross;
+`outstandingAmount` is `amount - creditedAmount` for the open remainder, and
+`totalAmount`/`overdueAmount` sum the outstanding amounts so credits reduce the
+collectible queue. The domain recomputes totals, count, and `daysPastDue` only
+when the expert omits them, using outstanding amounts, so the public summary
 stays coherent during rollout. The expert owns that projection; this repository
 contains the domain side of the contract only.
 
@@ -81,17 +101,24 @@ contains the domain adapter only.
 The domain forwards `GET` and `POST /internal/v1/policies/{policyId}/credit-notes`
 and `PATCH /internal/v1/policies/{policyId}/credit-notes/{creditNoteId}/status`
 with `X-EIA-Tenant`, `X-EIA-Book: DIRECT`, and the `tenantId` query scope.
-`POST` sends `{amount, currency, reason?}`; `PATCH` sends `{status}`. The expert
-returns the flat note `{creditNoteId, noteNumber, policyId, amount, currency,
-reason, status, issuedAt, appliedAt, createdAt}`; the domain accepts the
-expert's `id` identity and SPEC column aliases (`note_number`, `policy_id`,
-`issued_at`, `applied_at`, `created_at`). `GET` returns the policy's notes
+`POST` sends `{amount, currency, reason?}`; `PATCH` sends `{status,
+installmentId?}` and includes `installmentId` only when the target status is
+`APPLIED`, so ISSUED and CANCELLED keep the unchanged `{status}` payload. The
+expert returns the flat note `{creditNoteId, noteNumber, policyId, amount,
+currency, reason, status, issuedAt, appliedAt, appliedInstallmentId,
+createdAt}`; the domain accepts the expert's `id` identity and SPEC column
+aliases (`note_number`, `policy_id`, `issued_at`, `applied_at`,
+`applied_installment_id`, `created_at`). `GET` returns the policy's notes
 newest first, or an empty array when none exists. The expert owns the note
 number, the `DRAFT`/`ISSUED`/`APPLIED`/`CANCELLED` lifecycle, the
-policy-currency match, the optional 500-character reason, the approval gate,
-and the SAP credit-memo reference, so an unknown currency is a preserved `400
+policy-currency match, the optional 500-character reason, the APPLIED
+open-installment and amount-fit rules, the approval gate, and the SAP
+credit-memo reference, so an unknown currency is a preserved `400
 CURRENCY_MISMATCH`, a missing policy or note is `404 POLICY_NOT_FOUND` /
-`404 CREDIT_NOTE_NOT_FOUND`, and an out-of-order or terminal transition is
+`404 CREDIT_NOTE_NOT_FOUND`, a missing/foreign installment is
+`404 INSTALLMENT_NOT_FOUND`, an ineligible installment is `409
+INSTALLMENT_NOT_CREDITABLE`, an amount above the uncredited remainder is `409
+CREDIT_NOTE_EXCEEDS_INSTALLMENT`, and an out-of-order or terminal transition is
 `409 INVALID_CREDIT_NOTE_TRANSITION`. The expert side of this contract lives in
 `eia-policy-expert`; this repository contains the domain adapter only.
 
@@ -147,14 +174,16 @@ covers page-link rebuilding and header validation, and `PolicyClientTest` covers
 header forwarding and expert problem translation. `PolicyBillingControllerTest`
 covers the three billing routes, validation, tenant/book handling, and problem
 propagation; `PolicyBillingClientTest` uses `MockRestServiceServer` for the
-forwarded tenant/book headers, payloads, the installment list, and preserved
-`400`/`404`/`409` problems. `PolicyRenewalClientTest` uses
+forwarded tenant/book headers, payloads, the installment list and its
+credited/outstanding amounts, the summary mapping and derivation, and
+preserved `400`/`404`/`409` problems. `PolicyRenewalClientTest` uses
 `MockRestServiceServer` for the renewal tenant/book headers, new-term payload,
 successor policy and `renewedFromPolicyId` response, and preserved
 `400`/`404`/`409` problems. `PolicyReceivableClientTest` uses
 `MockRestServiceServer` for the receivable tenant/DIRECT headers,
-status/dueBefore/limit query, projection and summary mapping, ageing fallback,
-and preserved `400`/`404` problems; `PolicyReceivableControllerTest` covers the
+status/dueBefore/limit query, projection with credited/outstanding amounts, net
+summary mapping and fallback, ageing fallback, and preserved `400`/`404`
+problems; `PolicyReceivableControllerTest` covers the
 route, tenant/book handling, parameter parsing, and problem propagation, and
 `ReceivableServiceTest` covers status and limit normalization.
 `PolicyMassTortProfileClientTest` uses `MockRestServiceServer` for the profile
@@ -167,9 +196,11 @@ preserved `400`/`404`/`409` problems; `DunningControllerTest` covers the
 read/record routes, shape validation, tenant/book handling, and problem
 propagation, and `DunningServiceTest` covers the delegation.
 `PolicyCreditNoteClientTest` uses `MockRestServiceServer` for the credit-note
-tenant/DIRECT headers, the request and status payloads, the identity/column
-aliases, the newest-first list, and preserved `400`/`404`/`409` problems;
-`PolicyCreditNoteControllerTest` covers the list/request/status routes, shape
+tenant/DIRECT headers, the request and status payloads including the APPLIED
+`{status, installmentId}` body (and its absence for ISSUED/CANCELLED), the
+identity/column aliases, the applied installment, the newest-first list, and
+preserved `400`/`404`/`409` problems; `PolicyCreditNoteControllerTest` covers
+the list/request/status routes including the APPLIED binding, shape
 validation, tenant/book handling, and problem propagation, and
 `PolicyCreditNoteServiceTest` covers the delegation.
 `LegalEntityClientTest` uses `MockRestServiceServer` for the legal entity

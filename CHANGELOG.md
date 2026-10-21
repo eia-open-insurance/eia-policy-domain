@@ -98,6 +98,16 @@ The format is based on Keep a Changelog and the project uses Semantic Versioning
   `legalEntityId`, the tenant and `X-EIA-Book: DIRECT` are forwarded,
   non-DIRECT books are `404 BOOK_SCOPE_VIOLATION`, and expert
   `400`/`404`/`409` problems are preserved.
+- Credit-note application to premium installments. The status command accepts
+  an optional `installmentId` and forwards it only for `APPLIED`; the expert
+  requires an open same-policy installment and credits the note amount against
+  its uncredited remainder. Billing installments gain `creditedAmount` and
+  `outstandingAmount`, the billing plan gains the `{totalAmount, paidAmount,
+  waivedAmount, creditedAmount, outstandingAmount, overdueAmount, currency,
+  installmentCount}` summary, and the credit-note projection gains
+  `appliedInstallmentId`. Receivables gain `creditedAmount` and
+  `outstandingAmount`, and their totals use the outstanding amounts so credits
+  reduce the collectible queue.
 
 ### Changed
 

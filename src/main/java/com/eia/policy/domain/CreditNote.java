@@ -15,7 +15,9 @@ import java.util.UUID;
  *
  * <p>{@code issuedAt} is set when the note reaches {@code ISSUED} and
  * {@code appliedAt} when it is applied to the receivable; both are absent until
- * that transition happens. {@code createdAt} is the request timestamp.
+ * that transition happens. {@code appliedInstallmentId} identifies the open
+ * installment the credit was posted against and is absent until the note is
+ * {@code APPLIED}. {@code createdAt} is the request timestamp.
  * {@code reason} is optional and capped by the expert.</p>
  */
 public record CreditNote(
@@ -28,6 +30,25 @@ public record CreditNote(
         String status,
         Instant issuedAt,
         Instant appliedAt,
-        Instant createdAt
+        Instant createdAt,
+        UUID appliedInstallmentId
 ) {
+    /** Compatibility constructor for projections that predate credit application. */
+    public CreditNote(UUID creditNoteId, String noteNumber, UUID policyId, BigDecimal amount,
+                      String currency, String reason, String status, Instant issuedAt,
+                      Instant appliedAt, Instant createdAt) {
+        this(creditNoteId, noteNumber, policyId, amount, currency, reason, status, issuedAt,
+                appliedAt, createdAt, null);
+    }
+
+    /**
+     * Convenience constructor with the applied installment beside the applied
+     * timestamp, the order used by the expert projection.
+     */
+    public CreditNote(UUID creditNoteId, String noteNumber, UUID policyId, BigDecimal amount,
+                      String currency, String reason, String status, Instant issuedAt,
+                      Instant appliedAt, UUID appliedInstallmentId, Instant createdAt) {
+        this(creditNoteId, noteNumber, policyId, amount, currency, reason, status, issuedAt,
+                appliedAt, createdAt, appliedInstallmentId);
+    }
 }

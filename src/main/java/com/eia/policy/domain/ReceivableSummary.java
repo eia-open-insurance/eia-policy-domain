@@ -7,8 +7,9 @@ import java.util.List;
 
 /**
  * Tenant-scoped premium-receivable collection: the matching installments plus
- * their totals. {@code totalAmount} is the sum of every returned receivable;
- * {@code overdueAmount} is the sum of the receivables past their due date.
+ * their totals. {@code totalAmount} sums the <em>outstanding</em> amount of
+ * every returned receivable, so applied credits reduce the collectible total;
+ * {@code overdueAmount} is the outstanding subset past its due date.
  * {@code count} is the number of matching receivables returned by the expert
  * (normally the item count).
  */

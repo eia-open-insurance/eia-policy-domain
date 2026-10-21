@@ -66,11 +66,21 @@ class PolicyBillingControllerTest {
                 .andExpect(jsonPath("$.installments[0].installmentNumber").value(1))
                 .andExpect(jsonPath("$.installments[0].dueDate").value("2026-01-15"))
                 .andExpect(jsonPath("$.installments[0].amount").value("6000.0000"))
+                .andExpect(jsonPath("$.installments[0].creditedAmount").value("0.0000"))
+                .andExpect(jsonPath("$.installments[0].outstandingAmount").value("0.0000"))
                 .andExpect(jsonPath("$.installments[0].status").value("PAID"))
                 .andExpect(jsonPath("$.installments[0].paidAt").value("2026-01-15T12:00:00Z"))
                 .andExpect(jsonPath("$.installments[0].paymentId")
                         .value(PAYMENT_ID.toString()))
-                .andExpect(jsonPath("$.installments[1].status").value("PENDING"));
+                .andExpect(jsonPath("$.installments[1].creditedAmount").value("1000.0000"))
+                .andExpect(jsonPath("$.installments[1].outstandingAmount").value("5000.0000"))
+                .andExpect(jsonPath("$.installments[1].status").value("PENDING"))
+                .andExpect(jsonPath("$.summary.totalAmount").value("12000.0000"))
+                .andExpect(jsonPath("$.summary.paidAmount").value("6000.0000"))
+                .andExpect(jsonPath("$.summary.creditedAmount").value("1000.0000"))
+                .andExpect(jsonPath("$.summary.outstandingAmount").value("5000.0000"))
+                .andExpect(jsonPath("$.summary.currency").value("USD"))
+                .andExpect(jsonPath("$.summary.installmentCount").value(2));
     }
 
     @Test
@@ -260,12 +270,15 @@ class PolicyBillingControllerTest {
 
     private static Installment installment() {
         return new Installment(INSTALLMENT_ID, 1, LocalDate.of(2026, 1, 15),
-                new BigDecimal("6000.0000"), "PAID",
+                new BigDecimal("6000.0000"), new BigDecimal("0.0000"),
+                new BigDecimal("0.0000"), "PAID",
                 Instant.parse("2026-01-15T12:00:00Z"), PAYMENT_ID);
     }
 
     private static Installment pendingInstallment() {
         return new Installment(UUID.fromString("dddddddd-dddd-7ddd-8ddd-dddddddddddd"), 2,
-                LocalDate.of(2026, 7, 15), new BigDecimal("6000.0000"), "PENDING", null, null);
+                LocalDate.of(2026, 7, 15), new BigDecimal("6000.0000"),
+                new BigDecimal("1000.0000"), new BigDecimal("5000.0000"), "PENDING",
+                null, null);
     }
 }

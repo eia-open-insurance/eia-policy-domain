@@ -2,6 +2,7 @@ package com.eia.policy.domain;
 
 import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -618,7 +619,9 @@ public class PolicyClient {
     /**
      * The expert returns the receivables with their totals. Totals, the count,
      * and {@code daysPastDue} are recomputed only when the expert omits them,
-     * so an older projection still produces a coherent public summary.
+     * so an older projection still produces a coherent public summary. The
+     * fallback totals use each receivable's outstanding amount, so applied
+     * credits reduce the collectible balance.
      */
     private static ReceivableSummary toReceivableSummary(ExpertReceivableSummary view) {
         if (view == null) {
@@ -647,13 +650,14 @@ public class PolicyClient {
                 receivable.insuredPartyId(), receivable.installmentNumber(), receivable.dueDate(),
                 receivable.amount(), receivable.currency(), receivable.status(), daysPastDue,
                 receivable.paidAt(), receivable.paymentId(), receivable.lastDunningLevel(),
-                receivable.lastDunningAt());
+                receivable.lastDunningAt(), receivable.creditedAmount(),
+                receivable.outstandingAmount());
     }
 
     private static BigDecimal sum(List<Receivable> items, boolean overdueOnly) {
         return items.stream()
                 .filter(item -> !overdueOnly || isOverdue(item))
-                .map(Receivable::amount)
+                .map(Receivable::outstandingAmount)
                 .filter(Objects::nonNull)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
@@ -780,7 +784,11 @@ public class PolicyClient {
         return toCreditNote(view);
     }
 
-    /** Advances one credit note through the expert-owned status lifecycle. */
+    /**
+     * Advances one credit note through the expert-owned status lifecycle. The
+     * optional installment is forwarded only for an {@code APPLIED} transition;
+     * the other transitions keep the pre-application payload unchanged.
+     */
     public CreditNote updateCreditNoteStatus(UUID tenantId, UUID policyId, UUID creditNoteId,
                                              UpdateCreditNoteStatusCommand command) {
         ExpertCreditNote view = call("update credit note status", () -> client.patch()
@@ -790,10 +798,15 @@ public class PolicyClient {
                         .build(policyId, creditNoteId))
                 .header(TENANT_HEADER, tenantId.toString())
                 .header(BookScope.BOOK_HEADER, BookScope.DIRECT)
-                .body(command)
+                .body(new ExpertCreditNoteStatusRequest(command.status(),
+                        isApplied(command.status()) ? command.installmentId() : null))
                 .retrieve()
                 .body(ExpertCreditNote.class));
         return toCreditNote(view);
+    }
+
+    private static boolean isApplied(String status) {
+        return status != null && "APPLIED".equalsIgnoreCase(status.trim());
     }
 
     private static CreditNote toCreditNote(ExpertCreditNote view) {
@@ -803,12 +816,15 @@ public class PolicyClient {
         }
         return new CreditNote(view.creditNoteId(), view.noteNumber(), view.policyId(),
                 view.amount(), view.currency(), view.reason(), view.status(),
-                view.issuedAt(), view.appliedAt(), view.createdAt());
+                view.issuedAt(), view.appliedAt(), view.createdAt(),
+                view.appliedInstallmentId());
     }
 
     /**
-     * The expert returns the plan under {@code plan} plus a separate ordered
-     * installment list; the public projection is flat.
+     * The expert returns the plan under {@code plan}, the ordered installment
+     * list, and (when present) the plan summary. The public projection is flat
+     * and always carries a summary, derived from the rows when the expert omits
+     * it so an older projection still produces a coherent reading.
      */
     private static BillingPlan toBillingPlan(ExpertBillingPlanView view) {
         if (view == null || view.plan() == null) {
@@ -818,15 +834,49 @@ public class PolicyClient {
         ExpertBillingPlan plan = view.plan();
         List<Installment> installments = view.installments() == null ? List.of()
                 : view.installments().stream().map(PolicyClient::toInstallment).toList();
+        BillingSummary summary = toBillingSummary(view.summary(), plan, installments);
         return new BillingPlan(plan.id(), plan.planNumber(), plan.policyId(),
                 plan.totalPremium(), plan.currency(), plan.installmentCount(), plan.frequency(),
-                plan.firstDueDate(), plan.status(), installments);
+                plan.firstDueDate(), plan.status(), installments, summary);
     }
 
     private static Installment toInstallment(ExpertInstallment installment) {
         return new Installment(installment.id(), installment.installmentNumber(),
                 installment.dueDate(), installment.amount(), installment.status(),
-                installment.paidAt(), installment.paymentId());
+                installment.paidAt(), installment.paymentId(), installment.creditedAmount(),
+                installment.outstandingAmount());
+    }
+
+    /**
+     * Merges the expert summary with the derived one. An older expert that only
+     * returns the plan and installments still gets a complete summary, while a
+     * supplied total/paid/credited/outstanding value wins over the derivation.
+     */
+    private static BillingSummary toBillingSummary(ExpertBillingSummary view,
+                                                   ExpertBillingPlan plan,
+                                                   List<Installment> installments) {
+        BillingSummary derived = BillingSummary.of(plan.totalPremium(), plan.currency(),
+                installments);
+        if (view == null) {
+            return derived;
+        }
+        BigDecimal totalAmount = view.totalAmount() == null
+                ? derived.totalAmount() : view.totalAmount();
+        BigDecimal paid = view.paidAmount() == null ? derived.paidAmount() : view.paidAmount();
+        BigDecimal waived = view.waivedAmount() == null
+                ? derived.waivedAmount() : view.waivedAmount();
+        BigDecimal credited = view.creditedAmount() == null
+                ? derived.creditedAmount() : view.creditedAmount();
+        BigDecimal outstanding = view.outstandingAmount() == null
+                ? derived.outstandingAmount() : view.outstandingAmount();
+        BigDecimal overdue = view.overdueAmount() == null
+                ? derived.overdueAmount() : view.overdueAmount();
+        String currency = view.currency() == null || view.currency().isBlank()
+                ? derived.currency() : view.currency();
+        int installmentCount = view.installmentCount() == null
+                ? derived.installmentCount() : view.installmentCount();
+        return new BillingSummary(totalAmount, paid, waived, credited, outstanding, overdue,
+                currency, installmentCount);
     }
 
     private <T> ExpertItemPage<T> list(String operation, String path, UUID tenantId, UUID policyId,
@@ -1059,11 +1109,31 @@ public class PolicyClient {
     }
 
     /**
-     * Wire shape of the expert billing view: the plan and its ordered
-     * installments are separate members, unlike the flat public projection.
+     * Wire shape of the expert billing view: the plan, its ordered
+     * installments, and the plan summary are separate members, unlike the flat
+     * public projection. Older experts omit the summary.
      */
     @JsonIgnoreProperties(ignoreUnknown = true)
-    record ExpertBillingPlanView(ExpertBillingPlan plan, List<ExpertInstallment> installments) {
+    record ExpertBillingPlanView(ExpertBillingPlan plan, List<ExpertInstallment> installments,
+                                 ExpertBillingSummary summary) {
+    }
+
+    /**
+     * Wire shape of the expert billing summary. The aliases accept the plan
+     * vocabulary differences while the internal expert contract settles; every
+     * member is optional and the domain derives what is missing.
+     */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record ExpertBillingSummary(
+            @JsonAlias({"totalPremium", "totalPremiumAmount"}) BigDecimal totalAmount,
+            BigDecimal paidAmount,
+            BigDecimal waivedAmount,
+            BigDecimal creditedAmount,
+            BigDecimal outstandingAmount,
+            BigDecimal overdueAmount,
+            String currency,
+            Integer installmentCount
+    ) {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
@@ -1088,7 +1158,9 @@ public class PolicyClient {
             BigDecimal amount,
             String status,
             Instant paidAt,
-            UUID paymentId
+            UUID paymentId,
+            @JsonAlias("credited_amount") BigDecimal creditedAmount,
+            @JsonAlias("outstanding_amount") BigDecimal outstandingAmount
     ) {
     }
 
@@ -1165,7 +1237,9 @@ public class PolicyClient {
             Instant paidAt,
             UUID paymentId,
             @JsonAlias("last_dunning_level") String lastDunningLevel,
-            @JsonAlias("last_dunning_at") Instant lastDunningAt
+            @JsonAlias("last_dunning_at") Instant lastDunningAt,
+            @JsonAlias("credited_amount") BigDecimal creditedAmount,
+            @JsonAlias("outstanding_amount") BigDecimal outstandingAmount
     ) {
     }
 
@@ -1188,6 +1262,16 @@ public class PolicyClient {
     }
 
     /**
+     * Wire shape of the credit-note status command. {@code installmentId} is
+     * included only for an {@code APPLIED} transition, so an older expert that
+     * does not know the member still receives the unchanged command for ISSUED
+     * and CANCELLED.
+     */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    record ExpertCreditNoteStatusRequest(String status, UUID installmentId) {
+    }
+
+    /**
      * Wire shape of one expert credit note. The public projection is flat; the
      * aliases accept the expert's {@code id} identity and the SPEC column names
      * while the internal expert contract settles.
@@ -1203,7 +1287,8 @@ public class PolicyClient {
             String status,
             @JsonAlias("issued_at") Instant issuedAt,
             @JsonAlias("applied_at") Instant appliedAt,
-            @JsonAlias("created_at") Instant createdAt
+            @JsonAlias("created_at") Instant createdAt,
+            @JsonAlias({"applied_installment_id", "installmentId"}) UUID appliedInstallmentId
     ) {
     }
 

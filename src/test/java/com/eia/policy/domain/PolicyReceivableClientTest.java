@@ -58,8 +58,8 @@ class PolicyReceivableClientTest {
         ReceivableSummary summary = client.findReceivables(TENANT, "OVERDUE",
                 LocalDate.of(2026, 2, 1), 10);
 
-        assertThat(summary.totalAmount()).isEqualByComparingTo("12000.0000");
-        assertThat(summary.overdueAmount()).isEqualByComparingTo("6000.0000");
+        assertThat(summary.totalAmount()).isEqualByComparingTo("5000.0000");
+        assertThat(summary.overdueAmount()).isEqualByComparingTo("5000.0000");
         assertThat(summary.count()).isEqualTo(2);
         assertThat(summary.items()).hasSize(2);
         Receivable overdue = summary.items().get(0);
@@ -72,6 +72,8 @@ class PolicyReceivableClientTest {
         assertThat(overdue.installmentNumber()).isEqualTo(1);
         assertThat(overdue.dueDate()).isEqualTo(LocalDate.of(2026, 1, 15));
         assertThat(overdue.amount()).isEqualByComparingTo("6000.0000");
+        assertThat(overdue.creditedAmount()).isEqualByComparingTo("1000.0000");
+        assertThat(overdue.outstandingAmount()).isEqualByComparingTo("5000.0000");
         assertThat(overdue.currency()).isEqualTo("USD");
         assertThat(overdue.status()).isEqualTo("OVERDUE");
         assertThat(overdue.daysPastDue()).isEqualTo(17);
@@ -83,6 +85,8 @@ class PolicyReceivableClientTest {
         Receivable paid = summary.items().get(1);
         assertThat(paid.installmentId()).isEqualTo(SECOND_INSTALLMENT_ID);
         assertThat(paid.status()).isEqualTo("PAID");
+        assertThat(paid.creditedAmount()).isEqualByComparingTo("0.0000");
+        assertThat(paid.outstandingAmount()).isEqualByComparingTo("0.0000");
         assertThat(paid.daysPastDue()).isZero();
         assertThat(paid.paidAt()).isEqualTo(Instant.parse("2026-01-15T12:00:00Z"));
         assertThat(paid.paymentId()).isEqualTo(PAYMENT_ID);
@@ -148,6 +152,48 @@ class PolicyReceivableClientTest {
         assertThat(summary.count()).isEqualTo(2);
         assertThat(summary.items().get(0).daysPastDue()).isPositive();
         assertThat(summary.items().get(1).daysPastDue()).isZero();
+        server.verify();
+    }
+
+    @Test
+    void totalsUseTheOutstandingAmountWhenTheExpertOmitsTotals() {
+        RestClient.Builder builder = builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        PolicyClient client = new PolicyClient(builder, new ObjectMapper(), BASE);
+
+        server.expect(requestTo(RECEIVABLES + "?tenantId=" + TENANT + "&limit=20"))
+                .andRespond(withStatus(HttpStatus.OK)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body("""
+                                {
+                                  "items": [
+                                    {"installmentId": "%s", "planId": "%s",
+                                     "planNumber": "BP-2026-0001", "policyId": "%s",
+                                     "policyNumber": "POL-2026-0000001",
+                                     "insuredPartyId": "%s", "installmentNumber": 1,
+                                     "dueDate": "2020-01-15", "amount": "6000.0000",
+                                     "creditedAmount": "1000.0000",
+                                     "outstandingAmount": "5000.0000",
+                                     "currency": "USD", "status": "OVERDUE"},
+                                    {"installmentId": "%s", "planId": "%s",
+                                     "planNumber": "BP-2026-0001", "policyId": "%s",
+                                     "policyNumber": "POL-2026-0000001",
+                                     "insuredPartyId": "%s", "installmentNumber": 2,
+                                     "dueDate": "2099-07-15", "amount": "6000.0000",
+                                     "creditedAmount": "0.0000",
+                                     "outstandingAmount": "6000.0000",
+                                     "currency": "USD", "status": "DUE"}
+                                  ]
+                                }
+                                """.formatted(INSTALLMENT_ID, PLAN_ID, POLICY_ID, INSURED_PARTY_ID,
+                                SECOND_INSTALLMENT_ID, PLAN_ID, POLICY_ID, INSURED_PARTY_ID)));
+
+        ReceivableSummary summary = client.findReceivables(TENANT, null, null, 20);
+
+        assertThat(summary.totalAmount()).isEqualByComparingTo("11000.0000");
+        assertThat(summary.overdueAmount()).isEqualByComparingTo("5000.0000");
+        assertThat(summary.items().get(0).creditedAmount())
+                .isEqualByComparingTo("1000.0000");
         server.verify();
     }
 
@@ -277,19 +323,23 @@ class PolicyReceivableClientTest {
                     {"installmentId": "%s", "planId": "%s", "planNumber": "BP-2026-0001",
                      "policyId": "%s", "policyNumber": "POL-2026-0000001",
                      "insuredPartyId": "%s", "installmentNumber": 1,
-                     "dueDate": "2026-01-15", "amount": "6000.0000", "currency": "USD",
+                     "dueDate": "2026-01-15", "amount": "6000.0000",
+                     "creditedAmount": "1000.0000", "outstandingAmount": "5000.0000",
+                     "currency": "USD",
                      "status": "OVERDUE", "daysPastDue": 17, "paidAt": null,
                      "paymentId": null, "lastDunningLevel": "DUNNING_1",
                      "lastDunningAt": "2026-02-01T09:00:00Z"},
                     {"installmentId": "%s", "planId": "%s", "planNumber": "BP-2026-0001",
                      "policyId": "%s", "policyNumber": "POL-2026-0000001",
                      "insuredPartyId": "%s", "installmentNumber": 2,
-                     "dueDate": "2026-07-15", "amount": "6000.0000", "currency": "USD",
+                     "dueDate": "2026-07-15", "amount": "6000.0000",
+                     "creditedAmount": "0.0000", "outstandingAmount": "0.0000",
+                     "currency": "USD",
                      "status": "PAID", "daysPastDue": 0,
                      "paidAt": "2026-01-15T12:00:00Z", "paymentId": "%s"}
                   ],
-                  "totalAmount": "12000.0000",
-                  "overdueAmount": "6000.0000",
+                  "totalAmount": "5000.0000",
+                  "overdueAmount": "5000.0000",
                   "count": 2
                 }
                 """.formatted(INSTALLMENT_ID, PLAN_ID, POLICY_ID, INSURED_PARTY_ID,

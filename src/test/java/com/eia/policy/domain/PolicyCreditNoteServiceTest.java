@@ -17,6 +17,8 @@ class PolicyCreditNoteServiceTest {
     private static final UUID POLICY_ID = UUID.fromString("33333333-3333-7333-8333-333333333333");
     private static final UUID CREDIT_NOTE_ID =
             UUID.fromString("eeeeeeee-eeee-7eee-8eee-eeeeeeeeeeee");
+    private static final UUID INSTALLMENT_ID =
+            UUID.fromString("bbbbbbbb-bbbb-7bbb-8bbb-bbbbbbbbbbbb");
 
     private final PolicyClient client = mock(PolicyClient.class);
     private final PolicyCreditNoteService service = new PolicyCreditNoteService(client);
@@ -44,6 +46,19 @@ class PolicyCreditNoteServiceTest {
     @Test
     void delegatesTheStatusChangeToTheExpertClient() {
         UpdateCreditNoteStatusCommand command = new UpdateCreditNoteStatusCommand("ISSUED");
+        CreditNote note = note();
+        when(client.updateCreditNoteStatus(TENANT, POLICY_ID, CREDIT_NOTE_ID, command))
+                .thenReturn(note);
+
+        assertThat(service.updateStatus(TENANT, POLICY_ID, CREDIT_NOTE_ID, command))
+                .isSameAs(note);
+        verify(client).updateCreditNoteStatus(TENANT, POLICY_ID, CREDIT_NOTE_ID, command);
+    }
+
+    @Test
+    void delegatesTheAppliedInstallmentToTheExpertClient() {
+        UpdateCreditNoteStatusCommand command =
+                new UpdateCreditNoteStatusCommand("APPLIED", INSTALLMENT_ID);
         CreditNote note = note();
         when(client.updateCreditNoteStatus(TENANT, POLICY_ID, CREDIT_NOTE_ID, command))
                 .thenReturn(note);

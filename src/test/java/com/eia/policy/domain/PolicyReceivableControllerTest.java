@@ -52,8 +52,8 @@ class PolicyReceivableControllerTest {
                         .param("dueBefore", "2026-02-01")
                         .param("limit", "5"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.totalAmount").value("12000.0000"))
-                .andExpect(jsonPath("$.overdueAmount").value("12000.0000"))
+                .andExpect(jsonPath("$.totalAmount").value("11000.0000"))
+                .andExpect(jsonPath("$.overdueAmount").value("5000.0000"))
                 .andExpect(jsonPath("$.count").value(2))
                 .andExpect(jsonPath("$.items", hasSize(2)))
                 .andExpect(jsonPath("$.items[0].installmentId")
@@ -67,6 +67,8 @@ class PolicyReceivableControllerTest {
                 .andExpect(jsonPath("$.items[0].installmentNumber").value(1))
                 .andExpect(jsonPath("$.items[0].dueDate").value("2026-01-15"))
                 .andExpect(jsonPath("$.items[0].amount").value("6000.0000"))
+                .andExpect(jsonPath("$.items[0].creditedAmount").value("1000.0000"))
+                .andExpect(jsonPath("$.items[0].outstandingAmount").value("5000.0000"))
                 .andExpect(jsonPath("$.items[0].currency").value("USD"))
                 .andExpect(jsonPath("$.items[0].status").value("OVERDUE"))
                 .andExpect(jsonPath("$.items[0].daysPastDue").value(17))
@@ -187,14 +189,16 @@ class PolicyReceivableControllerTest {
                 List.of(
                         new Receivable(INSTALLMENT_ID, PLAN_ID, "BP-2026-0001", POLICY_ID,
                                 "POL-2026-0000001", INSURED_PARTY_ID, 1,
-                                LocalDate.of(2026, 1, 15), new BigDecimal("6000.0000"), "USD",
-                                "OVERDUE", 17, null, null, "DUNNING_1",
+                                LocalDate.of(2026, 1, 15), new BigDecimal("6000.0000"),
+                                new BigDecimal("1000.0000"), new BigDecimal("5000.0000"),
+                                "USD", "OVERDUE", 17, null, null, "DUNNING_1",
                                 Instant.parse("2026-02-01T09:00:00Z")),
                         new Receivable(UUID.fromString("dddddddd-dddd-7ddd-8ddd-dddddddddddd"),
                                 PLAN_ID, "BP-2026-0001", POLICY_ID, "POL-2026-0000001",
                                 INSURED_PARTY_ID, 2, LocalDate.of(2026, 7, 15),
+                                new BigDecimal("6000.0000"), new BigDecimal("0.0000"),
                                 new BigDecimal("6000.0000"), "USD", "OVERDUE", 3, null, null,
                                 null, null)),
-                new BigDecimal("12000.0000"), new BigDecimal("12000.0000"), 2);
+                new BigDecimal("11000.0000"), new BigDecimal("5000.0000"), 2);
     }
 }

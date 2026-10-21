@@ -63,12 +63,71 @@ class PolicyBillingClientTest {
             assertThat(installment.installmentNumber()).isEqualTo(1);
             assertThat(installment.dueDate()).isEqualTo(LocalDate.of(2026, 1, 15));
             assertThat(installment.amount()).isEqualByComparingTo("6000.0000");
+            assertThat(installment.creditedAmount()).isEqualByComparingTo("0.0000");
+            assertThat(installment.outstandingAmount()).isEqualByComparingTo("0.0000");
             assertThat(installment.status()).isEqualTo("PAID");
             assertThat(installment.paidAt()).isEqualTo(Instant.parse("2026-01-15T12:00:00Z"));
             assertThat(installment.paymentId()).isEqualTo(PAYMENT_ID);
         });
         assertThat(plan.installments().get(1).status()).isEqualTo("PENDING");
+        assertThat(plan.installments().get(1).creditedAmount()).isEqualByComparingTo("1000.0000");
+        assertThat(plan.installments().get(1).outstandingAmount())
+                .isEqualByComparingTo("5000.0000");
         assertThat(plan.installments().get(1).paidAt()).isNull();
+        assertThat(plan.summary()).satisfies(summary -> {
+            assertThat(summary.totalAmount()).isEqualByComparingTo("12000.0000");
+            assertThat(summary.paidAmount()).isEqualByComparingTo("6000.0000");
+            assertThat(summary.waivedAmount()).isEqualByComparingTo("0");
+            assertThat(summary.creditedAmount()).isEqualByComparingTo("1000.0000");
+            assertThat(summary.outstandingAmount()).isEqualByComparingTo("5000.0000");
+            assertThat(summary.overdueAmount()).isEqualByComparingTo("0");
+            assertThat(summary.currency()).isEqualTo("USD");
+            assertThat(summary.installmentCount()).isEqualTo(2);
+        });
+        server.verify();
+    }
+
+    @Test
+    void derivesTheBillingSummaryWhenTheExpertOmitsIt() {
+        RestClient.Builder builder = builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        PolicyClient client = new PolicyClient(builder, new ObjectMapper(), BASE);
+
+        server.expect(requestTo(BILLING + "?tenantId=" + TENANT))
+                .andRespond(withStatus(HttpStatus.OK)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body("""
+                                {
+                                  "plan": {"id": "%s", "policyId": "%s",
+                                    "planNumber": "BP-2026-0001", "totalPremium": "12000.0000",
+                                    "currency": "USD", "installmentCount": 2,
+                                    "frequency": "SEMI_ANNUAL", "firstDueDate": "2026-01-15",
+                                    "status": "ACTIVE"},
+                                  "installments": [
+                                    {"id": "%s", "installmentNumber": 1,
+                                     "dueDate": "2026-01-15", "amount": "6000.0000",
+                                     "status": "PAID", "creditedAmount": "0.0000",
+                                     "outstandingAmount": "0.0000",
+                                     "paidAt": "2026-01-15T12:00:00Z",
+                                     "paymentId": "%s"},
+                                    {"id": "dddddddd-dddd-7ddd-8ddd-dddddddddddd",
+                                     "installmentNumber": 2, "dueDate": "2026-07-15",
+                                     "amount": "6000.0000", "status": "DUE",
+                                     "creditedAmount": "1500.0000",
+                                     "outstandingAmount": "4500.0000"}
+                                  ]
+                                }
+                                """.formatted(PLAN_ID, POLICY_ID, INSTALLMENT_ID, PAYMENT_ID)));
+
+        BillingPlan plan = client.findBillingPlan(TENANT, POLICY_ID);
+
+        assertThat(plan.summary()).satisfies(summary -> {
+            assertThat(summary.totalAmount()).isEqualByComparingTo("12000.0000");
+            assertThat(summary.paidAmount()).isEqualByComparingTo("6000.0000");
+            assertThat(summary.creditedAmount()).isEqualByComparingTo("1500.0000");
+            assertThat(summary.outstandingAmount()).isEqualByComparingTo("4500.0000");
+            assertThat(summary.installmentCount()).isEqualTo(2);
+        });
         server.verify();
     }
 
@@ -117,7 +176,8 @@ class PolicyBillingClientTest {
                         .body("""
                                 {"id": "%s", "tenantId": "%s", "planId": "%s",
                                  "installmentNumber": 1, "dueDate": "2026-01-15",
-                                 "amount": "6000.0000", "status": "PAID",
+                                 "amount": "6000.0000", "creditedAmount": "500.0000",
+                                 "outstandingAmount": "0.0000", "status": "PAID",
                                  "paidAt": "2026-01-15T12:00:00Z", "paymentId": "%s",
                                  "createdAt": "2026-01-01T00:00:00Z"}
                                 """.formatted(INSTALLMENT_ID, TENANT, PLAN_ID, PAYMENT_ID)));
@@ -126,6 +186,8 @@ class PolicyBillingClientTest {
                 new UpdateInstallmentCommand("PAID", PAYMENT_ID));
 
         assertThat(installment.status()).isEqualTo("PAID");
+        assertThat(installment.creditedAmount()).isEqualByComparingTo("500.0000");
+        assertThat(installment.outstandingAmount()).isEqualByComparingTo("0.0000");
         assertThat(installment.paidAt()).isEqualTo(Instant.parse("2026-01-15T12:00:00Z"));
         assertThat(installment.paymentId()).isEqualTo(PAYMENT_ID);
         server.verify();
@@ -302,14 +364,26 @@ class PolicyBillingClientTest {
                   "installments": [
                     {"id": "%s", "tenantId": "%s", "planId": "%s",
                      "installmentNumber": 1, "dueDate": "2026-01-15",
-                     "amount": "6000.0000", "status": "PAID",
+                     "amount": "6000.0000", "creditedAmount": "0.0000",
+                     "outstandingAmount": "0.0000", "status": "PAID",
                      "paidAt": "2026-01-15T12:00:00Z", "paymentId": "%s",
                      "createdAt": "2026-01-01T00:00:00Z"},
                     {"id": "dddddddd-dddd-7ddd-8ddd-dddddddddddd", "tenantId": "%s",
                      "planId": "%s", "installmentNumber": 2, "dueDate": "2026-07-15",
-                     "amount": "6000.0000", "status": "PENDING", "paidAt": null,
+                     "amount": "6000.0000", "creditedAmount": "1000.0000",
+                     "outstandingAmount": "5000.0000", "status": "PENDING", "paidAt": null,
                      "paymentId": null, "createdAt": "2026-01-01T00:00:00Z"}
-                  ]
+                  ],
+                  "summary": {
+                    "totalAmount": "12000.0000",
+                    "paidAmount": "6000.0000",
+                    "waivedAmount": "0.0000",
+                    "creditedAmount": "1000.0000",
+                    "outstandingAmount": "5000.0000",
+                    "overdueAmount": "0.0000",
+                    "currency": "USD",
+                    "installmentCount": 2
+                  }
                 }
                 """.formatted(PLAN_ID, TENANT, POLICY_ID, INSTALLMENT_ID, TENANT, PLAN_ID,
                 PAYMENT_ID, TENANT, PLAN_ID);

@@ -24,7 +24,8 @@ import java.util.UUID;
  * <p>{@code GET} returns the policy's notes as an array, newest first.
  * {@code POST} requests a note and returns {@code 201} with the stored
  * projection. {@code PATCH .../{creditNoteId}/status} advances the note through
- * the expert-owned lifecycle and returns the updated projection.</p>
+ * the expert-owned lifecycle and returns the updated projection; the optional
+ * {@code installmentId} in that body is forwarded only for {@code APPLIED}.</p>
  */
 @RestController
 @RequestMapping("/api/v1/policies/{policyId}/credit-notes")

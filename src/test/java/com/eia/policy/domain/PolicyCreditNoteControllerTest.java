@@ -35,6 +35,8 @@ class PolicyCreditNoteControllerTest {
             UUID.fromString("eeeeeeee-eeee-7eee-8eee-eeeeeeeeeeee");
     private static final UUID SECOND_CREDIT_NOTE_ID =
             UUID.fromString("ffffffff-ffff-7fff-8fff-ffffffffffff");
+    private static final UUID INSTALLMENT_ID =
+            UUID.fromString("bbbbbbbb-bbbb-7bbb-8bbb-bbbbbbbbbbbb");
     private static final String NOTES = "/api/v1/policies/{policyId}/credit-notes";
     private static final String NOTE_STATUS = NOTES + "/{creditNoteId}/status";
 
@@ -156,6 +158,33 @@ class PolicyCreditNoteControllerTest {
                 .andExpect(jsonPath("$.status").value("ISSUED"))
                 .andExpect(jsonPath("$.issuedAt").value("2026-10-21T10:00:00Z"))
                 .andExpect(jsonPath("$.appliedAt").value(nullValue()));
+
+        verify(service).updateStatus(TENANT, POLICY_ID, CREDIT_NOTE_ID, command);
+    }
+
+    @Test
+    void appliesTheCreditNoteToTheNamedInstallment() throws Exception {
+        UpdateCreditNoteStatusCommand command =
+                new UpdateCreditNoteStatusCommand("APPLIED", INSTALLMENT_ID);
+        when(service.updateStatus(TENANT, POLICY_ID, CREDIT_NOTE_ID, command)).thenReturn(
+                new CreditNote(CREDIT_NOTE_ID, "CN-2026-0007", POLICY_ID,
+                        new BigDecimal("320.00"), "USD", "CANCELLATION", "APPLIED",
+                        Instant.parse("2026-10-21T10:00:00Z"),
+                        Instant.parse("2026-10-21T11:00:00Z"),
+                        Instant.parse("2026-10-20T18:00:00Z"), INSTALLMENT_ID));
+
+        mvc.perform(patch(NOTE_STATUS, POLICY_ID, CREDIT_NOTE_ID)
+                        .header("X-EIA-Tenant", TENANT.toString())
+                        .header("X-EIA-Book", "DIRECT")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"status": "APPLIED", "installmentId": "%s"}
+                                """.formatted(INSTALLMENT_ID)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("APPLIED"))
+                .andExpect(jsonPath("$.appliedAt").value("2026-10-21T11:00:00Z"))
+                .andExpect(jsonPath("$.appliedInstallmentId")
+                        .value(INSTALLMENT_ID.toString()));
 
         verify(service).updateStatus(TENANT, POLICY_ID, CREDIT_NOTE_ID, command);
     }

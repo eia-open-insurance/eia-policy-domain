@@ -37,6 +37,8 @@ class PolicyCreditNoteClientTest {
             UUID.fromString("eeeeeeee-eeee-7eee-8eee-eeeeeeeeeeee");
     private static final UUID SECOND_CREDIT_NOTE_ID =
             UUID.fromString("ffffffff-ffff-7fff-8fff-ffffffffffff");
+    private static final UUID INSTALLMENT_ID =
+            UUID.fromString("bbbbbbbb-bbbb-7bbb-8bbb-bbbbbbbbbbbb");
     private static final String BASE = "http://expert";
     private static final String NOTES = BASE + "/internal/v1/policies/" + POLICY_ID
             + "/credit-notes";
@@ -98,6 +100,7 @@ class PolicyCreditNoteClientTest {
         assertThat(notes.get(0).status()).isEqualTo("APPLIED");
         assertThat(notes.get(0).issuedAt()).isEqualTo(Instant.parse("2026-10-02T09:00:00Z"));
         assertThat(notes.get(0).appliedAt()).isEqualTo(Instant.parse("2026-10-05T09:00:00Z"));
+        assertThat(notes.get(0).appliedInstallmentId()).isEqualTo(INSTALLMENT_ID);
         assertThat(notes.get(1).reason()).isEqualTo("CANCELLATION");
         assertThat(notes.get(1).status()).isEqualTo("DRAFT");
         server.verify();
@@ -156,6 +159,67 @@ class PolicyCreditNoteClientTest {
         assertThat(note.status()).isEqualTo("ISSUED");
         assertThat(note.issuedAt()).isEqualTo(Instant.parse("2026-10-21T10:00:00Z"));
         assertThat(note.appliedAt()).isNull();
+        server.verify();
+    }
+
+    @Test
+    void appliesTheCreditNoteToTheInstallmentAndForwardsTheInstallmentId() {
+        RestClient.Builder builder = builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        PolicyClient client = new PolicyClient(builder, new ObjectMapper(), BASE);
+
+        server.expect(requestTo(NOTE_STATUS + "?tenantId=" + TENANT))
+                .andExpect(method(HttpMethod.PATCH))
+                .andExpect(header("X-EIA-Tenant", TENANT.toString()))
+                .andExpect(header("X-EIA-Book", "DIRECT"))
+                .andExpect(content().string("""
+                        {"status":"APPLIED","installmentId":"%s"}
+                        """.formatted(INSTALLMENT_ID).strip()))
+                .andRespond(withStatus(HttpStatus.OK)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body(appliedCreditNoteJson()));
+
+        CreditNote note = client.updateCreditNoteStatus(TENANT, POLICY_ID, CREDIT_NOTE_ID,
+                new UpdateCreditNoteStatusCommand("APPLIED", INSTALLMENT_ID));
+
+        assertThat(note.status()).isEqualTo("APPLIED");
+        assertThat(note.appliedAt()).isEqualTo(Instant.parse("2026-10-21T11:00:00Z"));
+        assertThat(note.appliedInstallmentId()).isEqualTo(INSTALLMENT_ID);
+        server.verify();
+    }
+
+    @Test
+    void doesNotForwardAnInstallmentForANonAppliedTransition() {
+        RestClient.Builder builder = builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        PolicyClient client = new PolicyClient(builder, new ObjectMapper(), BASE);
+
+        server.expect(requestTo(NOTE_STATUS + "?tenantId=" + TENANT))
+                .andExpect(method(HttpMethod.PATCH))
+                .andExpect(content().string("{\"status\":\"CANCELLED\"}"))
+                .andRespond(withStatus(HttpStatus.OK)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body("""
+                                {
+                                  "id": "%s",
+                                  "noteNumber": "CN-2026-0007",
+                                  "policyId": "%s",
+                                  "amount": "1250.5000",
+                                  "currency": "USD",
+                                  "reason": "CANCELLATION",
+                                  "status": "CANCELLED",
+                                  "issuedAt": null,
+                                  "appliedAt": null,
+                                  "appliedInstallmentId": null,
+                                  "createdAt": "2026-10-20T18:00:00Z"
+                                }
+                                """.formatted(CREDIT_NOTE_ID, POLICY_ID)));
+
+        CreditNote note = client.updateCreditNoteStatus(TENANT, POLICY_ID, CREDIT_NOTE_ID,
+                new UpdateCreditNoteStatusCommand("CANCELLED", INSTALLMENT_ID));
+
+        assertThat(note.status()).isEqualTo("CANCELLED");
+        assertThat(note.appliedInstallmentId()).isNull();
         server.verify();
     }
 
@@ -388,6 +452,25 @@ class PolicyCreditNoteClientTest {
                 """.formatted(CREDIT_NOTE_ID, TENANT, POLICY_ID);
     }
 
+    private static String appliedCreditNoteJson() {
+        return """
+                {
+                  "id": "%s",
+                  "tenantId": "%s",
+                  "noteNumber": "CN-2026-0007",
+                  "policyId": "%s",
+                  "amount": "1250.5000",
+                  "currency": "USD",
+                  "reason": "CANCELLATION",
+                  "status": "APPLIED",
+                  "issuedAt": "2026-10-21T10:00:00Z",
+                  "appliedAt": "2026-10-21T11:00:00Z",
+                  "appliedInstallmentId": "%s",
+                  "createdAt": "2026-10-20T18:00:00Z"
+                }
+                """.formatted(CREDIT_NOTE_ID, TENANT, POLICY_ID, INSTALLMENT_ID);
+    }
+
     private static String creditNoteHistoryJson() {
         return """
                 [
@@ -396,6 +479,7 @@ class PolicyCreditNoteClientTest {
                    "reason": "ENDORSEMENT", "status": "APPLIED",
                    "issuedAt": "2026-10-02T09:00:00Z",
                    "appliedAt": "2026-10-05T09:00:00Z",
+                   "appliedInstallmentId": "%s",
                    "createdAt": "2026-10-01T09:00:00Z"},
                   {"id": "%s", "tenantId": "%s", "noteNumber": "CN-2026-0007",
                    "policyId": "%s", "amount": "1250.5000", "currency": "USD",
@@ -403,7 +487,7 @@ class PolicyCreditNoteClientTest {
                    "issuedAt": null, "appliedAt": null,
                    "createdAt": "2026-10-20T18:00:00Z"}
                 ]
-                """.formatted(SECOND_CREDIT_NOTE_ID, TENANT, POLICY_ID,
+                """.formatted(SECOND_CREDIT_NOTE_ID, TENANT, POLICY_ID, INSTALLMENT_ID,
                 CREDIT_NOTE_ID, TENANT, POLICY_ID);
     }
 }
