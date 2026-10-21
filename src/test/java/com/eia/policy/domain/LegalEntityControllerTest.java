@@ -58,7 +58,7 @@ class LegalEntityControllerTest {
                                   "code": "ABC-INS",
                                   "name": "ABC Insurance Company",
                                   "entityType": "INSURER",
-                                  "jurisdiction": "USA",
+                                  "jurisdiction": "US",
                                   "regulator": "California Department of Insurance",
                                   "licenseNumber": "CA-1234567"
                                 }
@@ -69,7 +69,7 @@ class LegalEntityControllerTest {
                 .andExpect(jsonPath("$.code").value("ABC-INS"))
                 .andExpect(jsonPath("$.name").value("ABC Insurance Company"))
                 .andExpect(jsonPath("$.entityType").value("INSURER"))
-                .andExpect(jsonPath("$.jurisdiction").value("USA"))
+                .andExpect(jsonPath("$.jurisdiction").value("US"))
                 .andExpect(jsonPath("$.regulator")
                         .value("California Department of Insurance"))
                 .andExpect(jsonPath("$.licenseNumber").value("CA-1234567"))
@@ -80,7 +80,7 @@ class LegalEntityControllerTest {
                 ArgumentCaptor.forClass(CreateLegalEntityCommand.class);
         verify(client).createLegalEntity(eq(TENANT), captor.capture());
         assertThat(captor.getValue()).isEqualTo(new CreateLegalEntityCommand("ABC-INS",
-                "ABC Insurance Company", "INSURER", "USA",
+                "ABC Insurance Company", "INSURER", "US",
                 "California Department of Insurance", "CA-1234567"));
     }
 
@@ -96,7 +96,7 @@ class LegalEntityControllerTest {
                 .andExpect(jsonPath("$[0].code").value("ABC-INS"))
                 .andExpect(jsonPath("$[0].name").value("ABC Insurance Company"))
                 .andExpect(jsonPath("$[0].entityType").value("INSURER"))
-                .andExpect(jsonPath("$[0].jurisdiction").value("USA"))
+                .andExpect(jsonPath("$[0].jurisdiction").value("US"))
                 .andExpect(jsonPath("$[0].status").value("ACTIVE"));
     }
 
@@ -121,7 +121,7 @@ class LegalEntityControllerTest {
                 .andExpect(jsonPath("$.code").value("ABC-INS"))
                 .andExpect(jsonPath("$.name").value("ABC Insurance Company"))
                 .andExpect(jsonPath("$.entityType").value("INSURER"))
-                .andExpect(jsonPath("$.jurisdiction").value("USA"))
+                .andExpect(jsonPath("$.jurisdiction").value("US"))
                 .andExpect(jsonPath("$.regulator")
                         .value("California Department of Insurance"))
                 .andExpect(jsonPath("$.licenseNumber").value("CA-1234567"))
@@ -219,7 +219,7 @@ class LegalEntityControllerTest {
                                   "code": "ABC-INS",
                                   "name": "ABC Insurance Company",
                                   "entityType": "CUSTOM",
-                                  "jurisdiction": "USA"
+                                  "jurisdiction": "US"
                                 }
                                 """))
                 .andExpect(status().isBadRequest())
@@ -263,7 +263,7 @@ class LegalEntityControllerTest {
                                   "code": "ABC-INS",
                                   "name": "ABC Insurance Company",
                                   "entityType": "INSURER",
-                                  "jurisdiction": "USA"
+                                  "jurisdiction": "US"
                                 }
                                 """))
                 .andExpect(status().isConflict())
@@ -275,7 +275,8 @@ class LegalEntityControllerTest {
 
     private static LegalEntityDto legalEntity() {
         return new LegalEntityDto(LEGAL_ENTITY_ID, "ABC-INS", "ABC Insurance Company", "INSURER",
-                "USA", "California Department of Insurance", "CA-1234567", "ACTIVE",
+                "US", "California Department of Insurance", "CA-1234567", "ACTIVE",
                 Instant.parse("2026-10-20T12:00:00Z"));
     }
 }
+

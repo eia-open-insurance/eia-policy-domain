@@ -10,11 +10,11 @@ import jakarta.validation.constraints.Size;
  * only the request shape.
  */
 public record CreateLegalEntityCommand(
-        @NotBlank @Size(max = 16) String code,
-        @NotBlank @Size(max = 300) String name,
+        @NotBlank @Size(max = 32) String code,
+        @NotBlank @Size(max = 200) String name,
         @NotBlank @Size(max = 32) String entityType,
-        @NotBlank @Size(max = 64) String jurisdiction,
+        @NotBlank @Size(max = 2) String jurisdiction,
         @Size(max = 120) String regulator,
-        @Size(max = 64) String licenseNumber
+        @Size(max = 80) String licenseNumber
 ) {
 }
