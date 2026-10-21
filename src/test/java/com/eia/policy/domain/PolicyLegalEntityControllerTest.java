@@ -111,22 +111,25 @@ class PolicyLegalEntityControllerTest {
     }
 
     @Test
-    void validatesTheAssignmentBody() throws Exception {
+    void clearsThePolicyLegalEntityWhenTheIdIsAbsent() throws Exception {
+        when(client.updatePolicyLegalEntity(TENANT, POLICY_ID, null))
+                .thenReturn(new Mutation<>(policy(null, 8), "\"8\"", false));
+
         mvc.perform(patch(PATH, POLICY_ID)
                         .header("X-EIA-Tenant", TENANT.toString())
                         .header("X-EIA-Book", DIRECT)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{}"))
-                .andExpect(status().isBadRequest())
-                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
-                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
-                .andExpect(jsonPath("$.errors[0].field").value("legalEntityId"));
-
-        verifyNoInteractions(client);
+                .andExpect(status().isOk())
+                .andExpect(header().string("ETag", "\"8\""));
+        verify(client).updatePolicyLegalEntity(TENANT, POLICY_ID, null);
     }
 
     @Test
-    void rejectsANullLegalEntityIdBecauseEveryPolicyHasAnIssuer() throws Exception {
+    void clearsThePolicyLegalEntityWhenTheIdIsNull() throws Exception {
+        when(client.updatePolicyLegalEntity(TENANT, POLICY_ID, null))
+                .thenReturn(new Mutation<>(policy(null, 8), "\"8\"", false));
+
         mvc.perform(patch(PATH, POLICY_ID)
                         .header("X-EIA-Tenant", TENANT.toString())
                         .header("X-EIA-Book", DIRECT)
@@ -134,11 +137,8 @@ class PolicyLegalEntityControllerTest {
                         .content("""
                                 {"legalEntityId": null}
                                 """))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
-                .andExpect(jsonPath("$.errors[0].field").value("legalEntityId"));
-
-        verifyNoInteractions(client);
+                .andExpect(status().isOk());
+        verify(client).updatePolicyLegalEntity(TENANT, POLICY_ID, null);
     }
 
     @Test
