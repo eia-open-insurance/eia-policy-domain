@@ -3,14 +3,17 @@ package com.eia.policy.domain;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
+import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
 /**
  * Public domain facade for the program catalog. The expert owns program
- * numbering, the type/status vocabulary, tenant-scoped uniqueness, and policy
- * membership; the domain validates the request shape before delegating.
+ * numbering, the type/status vocabulary, tenant-scoped uniqueness, policy
+ * membership, and the capacity aggregates; the domain validates the request
+ * shape before delegating.
  */
 @Service
 public class ProgramService {
@@ -30,6 +33,7 @@ public class ProgramService {
 
     public ProgramDto create(UUID tenantId, CreateProgramCommand command) {
         validateDates(command.effectiveFrom(), command.effectiveTo());
+        validateCapacity(command.capacityAmount(), command.capacityCurrency());
         return client.createProgram(tenantId, command);
     }
 
@@ -39,6 +43,30 @@ public class ProgramService {
                     "Program validation failed",
                     List.of(new ApiException.FieldIssue("effectiveTo", "INVALID_DATE_RANGE",
                             "effectiveTo must be on or after effectiveFrom")));
+        }
+    }
+
+    /**
+     * A capacity limit is a single amount/currency pair. Bean validation already
+     * rejects a non-positive amount and a malformed currency; this check only
+     * enforces that the two optional members are supplied together.
+     */
+    private static void validateCapacity(BigDecimal capacityAmount, String capacityCurrency) {
+        if (capacityAmount == null && capacityCurrency == null) {
+            return;
+        }
+        List<ApiException.FieldIssue> issues = new ArrayList<>();
+        if (capacityAmount == null) {
+            issues.add(new ApiException.FieldIssue("capacityAmount", "CAPACITY_AMOUNT_REQUIRED",
+                    "capacityAmount is required when capacityCurrency is supplied"));
+        }
+        if (capacityCurrency == null) {
+            issues.add(new ApiException.FieldIssue("capacityCurrency", "CAPACITY_CURRENCY_REQUIRED",
+                    "capacityCurrency is required when capacityAmount is supplied"));
+        }
+        if (!issues.isEmpty()) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "VALIDATION_ERROR",
+                    "Program validation failed", issues);
         }
     }
 }

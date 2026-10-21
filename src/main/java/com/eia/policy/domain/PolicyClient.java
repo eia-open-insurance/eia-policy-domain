@@ -491,7 +491,8 @@ public class PolicyClient {
         }
         return new ProgramDto(view.programId(), view.programNumber(), view.name(),
                 view.programType(), view.effectiveFrom(), view.effectiveTo(), view.status(),
-                view.leadPolicyId(), view.createdAt());
+                view.leadPolicyId(), view.capacityAmount(), view.capacityCurrency(),
+                view.usedAmount(), view.utilizationPct(), view.policyCount(), view.createdAt());
     }
 
     // ------------------------------------------------------------------
@@ -1186,8 +1187,10 @@ public class PolicyClient {
 
     /**
      * Wire shape of one expert program. The public projection is flat; the
-     * aliases accept the SPEC column names and the expert's {@code id}
-     * identity while the internal expert contract settles.
+     * aliases accept the SPEC column names, the expert's {@code id} identity,
+     * and the snake-case capacity columns while the internal expert contract
+     * settles. The capacity aggregates are optional so an expert that does not
+     * derive them still returns a usable program.
      */
     @JsonIgnoreProperties(ignoreUnknown = true)
     record ExpertProgram(
@@ -1199,6 +1202,11 @@ public class PolicyClient {
             @JsonAlias({"effective_to", "expirationDate", "endDate"}) LocalDate effectiveTo,
             @JsonAlias("program_status") String status,
             @JsonAlias("lead_policy_id") UUID leadPolicyId,
+            @JsonAlias("capacity_amount") BigDecimal capacityAmount,
+            @JsonAlias("capacity_currency") String capacityCurrency,
+            @JsonAlias("used_amount") BigDecimal usedAmount,
+            @JsonAlias({"utilization_pct", "utilization_percentage"}) BigDecimal utilizationPct,
+            @JsonAlias("policy_count") Integer policyCount,
             @JsonAlias("created_at") Instant createdAt
     ) {
     }

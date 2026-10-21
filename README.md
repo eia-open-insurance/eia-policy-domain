@@ -182,23 +182,35 @@ problems reach the caller unchanged; a policy without a profile is
 ### Programs
 
 `POST /api/v1/programs` creates a program from `{name, programType,
-effectiveFrom, effectiveTo, leadPolicyId?}` and returns `201` with the flat
-projection `{programId, programNumber, name, programType, effectiveFrom,
-effectiveTo, status, leadPolicyId, createdAt}`. The program number and status
-are server-owned. `GET /api/v1/programs` returns the tenant's programs as an
-array ordered newest first, and `GET /api/v1/programs/{programId}` returns one
+effectiveFrom, effectiveTo, leadPolicyId?, capacityAmount?,
+capacityCurrency?}` and returns `201` with the flat projection `{programId,
+programNumber, name, programType, effectiveFrom, effectiveTo, status,
+leadPolicyId, capacityAmount, capacityCurrency, usedAmount, utilizationPct,
+policyCount, createdAt}`. The program number and status are server-owned.
+`capacityAmount` and `capacityCurrency` are an optional pair: omitting both
+records a program without a capacity limit, while supplying one requires a
+positive amount and a three-letter upper-case ISO 4217 currency. The derived
+`usedAmount`, `utilizationPct`, and `policyCount` members aggregate the
+policies assigned to the program; the expert owns that derivation and the
+domain publishes the values unchanged. Amounts and the percentage are decimal
+strings. `GET /api/v1/programs` returns the tenant's programs as an array
+ordered newest first, and `GET /api/v1/programs/{programId}` returns one
 program. `PATCH /api/v1/policies/{policyId}/program` accepts `{programId}` and
 returns the updated `PolicyDto`; a null or absent `programId` clears the
 policy's program. The `PolicyDto` projection now exposes `programId` on policy
 reads and writes.
 
 The Policy expert owns program numbering, the program-type and status
-vocabularies, tenant-scoped uniqueness, the effective-date rules, and the
-policy membership and lead-policy rules. The domain validates the request
-shape and the effective-date ordering, forwards `X-EIA-Tenant` and
-`X-EIA-Book: DIRECT` on every call, and rejects a supplied non-DIRECT book with
+vocabularies, tenant-scoped uniqueness, the effective-date rules, the
+policy-membership and lead-policy rules, and the capacity aggregates. The
+domain validates the request shape, the effective-date ordering, and the
+capacity amount/currency pair, forwards `X-EIA-Tenant` and `X-EIA-Book:
+DIRECT` on every call, and rejects a supplied non-DIRECT book with
 `404 BOOK_SCOPE_VIOLATION`. Expert `400`, `404`, and `409` problems reach the
-caller unchanged; a missing program is `404 PROGRAM_NOT_FOUND`.
+caller unchanged; a missing program is `404 PROGRAM_NOT_FOUND`. A capacity pair
+with one member missing is a `400 VALIDATION_ERROR` with
+`CAPACITY_AMOUNT_REQUIRED` or `CAPACITY_CURRENCY_REQUIRED` on the missing
+field.
 
 ### Legal entities
 

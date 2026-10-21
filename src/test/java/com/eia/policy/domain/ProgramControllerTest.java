@@ -10,6 +10,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
@@ -73,6 +74,11 @@ class ProgramControllerTest {
                 .andExpect(jsonPath("$.effectiveTo").value("2027-01-01"))
                 .andExpect(jsonPath("$.status").value("ACTIVE"))
                 .andExpect(jsonPath("$.leadPolicyId").value(LEAD_POLICY_ID.toString()))
+                .andExpect(jsonPath("$.capacityAmount").value("25000000.0000"))
+                .andExpect(jsonPath("$.capacityCurrency").value("USD"))
+                .andExpect(jsonPath("$.usedAmount").value("10000000.0000"))
+                .andExpect(jsonPath("$.utilizationPct").value("40.0000"))
+                .andExpect(jsonPath("$.policyCount").value(4))
                 .andExpect(jsonPath("$.createdAt").value("2026-10-20T12:00:00Z"));
 
         ArgumentCaptor<CreateProgramCommand> captor =
@@ -80,7 +86,39 @@ class ProgramControllerTest {
         verify(client).createProgram(eq(TENANT), captor.capture());
         assertThat(captor.getValue()).isEqualTo(new CreateProgramCommand(
                 "Asbestos Primary Program", "MASS_TORT", LocalDate.of(2026, 1, 1),
-                LocalDate.of(2027, 1, 1), LEAD_POLICY_ID));
+                LocalDate.of(2027, 1, 1), LEAD_POLICY_ID, null, null));
+    }
+
+    @Test
+    void createsTheProgramWithCapacityAndForwardsThePair() throws Exception {
+        when(client.createProgram(eq(TENANT), any(CreateProgramCommand.class)))
+                .thenReturn(program());
+
+        mvc.perform(post(PROGRAMS)
+                        .header("X-EIA-Tenant", TENANT.toString())
+                        .header("X-EIA-Book", DIRECT)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "name": "Asbestos Primary Program",
+                                  "programType": "MASS_TORT",
+                                  "effectiveFrom": "2026-01-01",
+                                  "effectiveTo": "2027-01-01",
+                                  "leadPolicyId": "%s",
+                                  "capacityAmount": 25000000.0000,
+                                  "capacityCurrency": "USD"
+                                }
+                                """.formatted(LEAD_POLICY_ID)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.capacityAmount").value("25000000.0000"))
+                .andExpect(jsonPath("$.capacityCurrency").value("USD"));
+
+        ArgumentCaptor<CreateProgramCommand> captor =
+                ArgumentCaptor.forClass(CreateProgramCommand.class);
+        verify(client).createProgram(eq(TENANT), captor.capture());
+        assertThat(captor.getValue().capacityAmount())
+                .isEqualTo(new BigDecimal("25000000.0000"));
+        assertThat(captor.getValue().capacityCurrency()).isEqualTo("USD");
     }
 
     @Test
@@ -209,6 +247,104 @@ class ProgramControllerTest {
     }
 
     @Test
+    void rejectsACapacityAmountWithoutACurrency() throws Exception {
+        mvc.perform(post(PROGRAMS)
+                        .header("X-EIA-Tenant", TENANT.toString())
+                        .header("X-EIA-Book", DIRECT)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "name": "Asbestos Primary Program",
+                                  "programType": "MASS_TORT",
+                                  "effectiveFrom": "2026-01-01",
+                                  "effectiveTo": "2027-01-01",
+                                  "capacityAmount": 25000000.0000
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.errors[0].field").value("capacityCurrency"))
+                .andExpect(jsonPath("$.errors[0].code").value("CAPACITY_CURRENCY_REQUIRED"));
+
+        verifyNoInteractions(client);
+    }
+
+    @Test
+    void rejectsACapacityCurrencyWithoutAnAmount() throws Exception {
+        mvc.perform(post(PROGRAMS)
+                        .header("X-EIA-Tenant", TENANT.toString())
+                        .header("X-EIA-Book", DIRECT)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "name": "Asbestos Primary Program",
+                                  "programType": "MASS_TORT",
+                                  "effectiveFrom": "2026-01-01",
+                                  "effectiveTo": "2027-01-01",
+                                  "capacityCurrency": "USD"
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.errors[0].field").value("capacityAmount"))
+                .andExpect(jsonPath("$.errors[0].code").value("CAPACITY_AMOUNT_REQUIRED"));
+
+        verifyNoInteractions(client);
+    }
+
+    @Test
+    void rejectsANonPositiveCapacityAmount() throws Exception {
+        mvc.perform(post(PROGRAMS)
+                        .header("X-EIA-Tenant", TENANT.toString())
+                        .header("X-EIA-Book", DIRECT)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "name": "Asbestos Primary Program",
+                                  "programType": "MASS_TORT",
+                                  "effectiveFrom": "2026-01-01",
+                                  "effectiveTo": "2027-01-01",
+                                  "capacityAmount": 0,
+                                  "capacityCurrency": "USD"
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.errors[0].field").value("capacityAmount"))
+                .andExpect(jsonPath("$.errors[0].code").value("MIN_VALUE"));
+
+        verifyNoInteractions(client);
+    }
+
+    @Test
+    void rejectsAMalformedCapacityCurrency() throws Exception {
+        mvc.perform(post(PROGRAMS)
+                        .header("X-EIA-Tenant", TENANT.toString())
+                        .header("X-EIA-Book", DIRECT)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "name": "Asbestos Primary Program",
+                                  "programType": "MASS_TORT",
+                                  "effectiveFrom": "2026-01-01",
+                                  "effectiveTo": "2027-01-01",
+                                  "capacityAmount": 25000000.0000,
+                                  "capacityCurrency": "usd"
+                                }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.errors[0].field").value("capacityCurrency"))
+                .andExpect(jsonPath("$.errors[0].code").value("INVALID_FORMAT"));
+
+        verifyNoInteractions(client);
+    }
+
+    @Test
     void preservesTheExpertProgramNotFoundProblem() throws Exception {
         when(client.findProgram(TENANT, PROGRAM_ID)).thenThrow(new ApiException(
                 HttpStatus.NOT_FOUND, "PROGRAM_NOT_FOUND",
@@ -226,6 +362,8 @@ class ProgramControllerTest {
     private static ProgramDto program() {
         return new ProgramDto(PROGRAM_ID, "PRG-2026-0000001", "Asbestos Primary Program",
                 "MASS_TORT", LocalDate.of(2026, 1, 1), LocalDate.of(2027, 1, 1), "ACTIVE",
-                LEAD_POLICY_ID, Instant.parse("2026-10-20T12:00:00Z"));
+                LEAD_POLICY_ID, new BigDecimal("25000000.0000"), "USD",
+                new BigDecimal("10000000.0000"), new BigDecimal("40.0000"), 4,
+                Instant.parse("2026-10-20T12:00:00Z"));
     }
 }

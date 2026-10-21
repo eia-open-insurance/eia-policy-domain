@@ -12,6 +12,7 @@ import org.springframework.test.json.JsonCompareMode;
 import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
@@ -52,7 +53,9 @@ class ProgramClientTest {
                           "programType": "MASS_TORT",
                           "effectiveFrom": "2026-01-01",
                           "effectiveTo": "2027-01-01",
-                          "leadPolicyId": "%s"
+                          "leadPolicyId": "%s",
+                          "capacityAmount": 25000000.0000,
+                          "capacityCurrency": "USD"
                         }
                         """.formatted(LEAD_POLICY_ID), JsonCompareMode.STRICT))
                 .andRespond(withStatus(HttpStatus.CREATED)
@@ -69,7 +72,50 @@ class ProgramClientTest {
         assertThat(program.effectiveTo()).isEqualTo(LocalDate.of(2027, 1, 1));
         assertThat(program.status()).isEqualTo("ACTIVE");
         assertThat(program.leadPolicyId()).isEqualTo(LEAD_POLICY_ID);
+        assertThat(program.capacityAmount()).isEqualTo(new BigDecimal("25000000.0000"));
+        assertThat(program.capacityCurrency()).isEqualTo("USD");
+        assertThat(program.usedAmount()).isEqualTo(new BigDecimal("10000000.0000"));
+        assertThat(program.utilizationPct()).isEqualTo(new BigDecimal("40.0000"));
+        assertThat(program.policyCount()).isEqualTo(4);
         assertThat(program.createdAt()).isEqualTo(Instant.parse("2026-10-20T12:00:00Z"));
+        server.verify();
+    }
+
+    @Test
+    void createsTheProgramWithoutCapacityFields() {
+        RestClient.Builder builder = builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        PolicyClient client = new PolicyClient(builder, new ObjectMapper(), BASE);
+
+        server.expect(requestTo(PROGRAMS + "?tenantId=" + TENANT))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(header("X-EIA-Tenant", TENANT.toString()))
+                .andExpect(header("X-EIA-Book", "DIRECT"))
+                .andExpect(content().json("""
+                        {
+                          "name": "Asbestos Primary Program",
+                          "programType": "MASS_TORT",
+                          "effectiveFrom": "2026-01-01",
+                          "effectiveTo": "2027-01-01",
+                          "leadPolicyId": "%s",
+                          "capacityAmount": null,
+                          "capacityCurrency": null
+                        }
+                        """.formatted(LEAD_POLICY_ID), JsonCompareMode.STRICT))
+                .andRespond(withStatus(HttpStatus.CREATED)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body(programJsonWithoutCapacity()));
+
+        ProgramDto program = client.createProgram(TENANT,
+                new CreateProgramCommand("Asbestos Primary Program", "MASS_TORT",
+                        LocalDate.of(2026, 1, 1), LocalDate.of(2027, 1, 1), LEAD_POLICY_ID,
+                        null, null));
+
+        assertThat(program.capacityAmount()).isNull();
+        assertThat(program.capacityCurrency()).isNull();
+        assertThat(program.usedAmount()).isNull();
+        assertThat(program.utilizationPct()).isNull();
+        assertThat(program.policyCount()).isNull();
         server.verify();
     }
 
@@ -140,6 +186,11 @@ class ProgramClientTest {
                                   "effective_to": null,
                                   "program_status": "CLOSED",
                                   "lead_policy_id": null,
+                                  "capacity_amount": "5000000.0000",
+                                  "capacity_currency": "EUR",
+                                  "used_amount": "1250000.0000",
+                                  "utilization_pct": "25.0000",
+                                  "policy_count": 3,
                                   "created_at": "2026-10-20T12:00:00Z"
                                 }
                                 """.formatted(PROGRAM_ID)));
@@ -154,7 +205,35 @@ class ProgramClientTest {
         assertThat(program.effectiveTo()).isNull();
         assertThat(program.status()).isEqualTo("CLOSED");
         assertThat(program.leadPolicyId()).isNull();
+        assertThat(program.capacityAmount()).isEqualTo(new BigDecimal("5000000.0000"));
+        assertThat(program.capacityCurrency()).isEqualTo("EUR");
+        assertThat(program.usedAmount()).isEqualTo(new BigDecimal("1250000.0000"));
+        assertThat(program.utilizationPct()).isEqualTo(new BigDecimal("25.0000"));
+        assertThat(program.policyCount()).isEqualTo(3);
         assertThat(program.createdAt()).isEqualTo(Instant.parse("2026-10-20T12:00:00Z"));
+        server.verify();
+    }
+
+    @Test
+    void mapsAProgramWithoutCapacityMembers() {
+        RestClient.Builder builder = builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        PolicyClient client = new PolicyClient(builder, new ObjectMapper(), BASE);
+
+        server.expect(requestTo(PROGRAMS + "/" + PROGRAM_ID + "?tenantId=" + TENANT))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withStatus(HttpStatus.OK)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body(programJsonWithoutCapacity()));
+
+        ProgramDto program = client.findProgram(TENANT, PROGRAM_ID);
+
+        assertThat(program.programId()).isEqualTo(PROGRAM_ID);
+        assertThat(program.capacityAmount()).isNull();
+        assertThat(program.capacityCurrency()).isNull();
+        assertThat(program.usedAmount()).isNull();
+        assertThat(program.utilizationPct()).isNull();
+        assertThat(program.policyCount()).isNull();
         server.verify();
     }
 
@@ -344,10 +423,32 @@ class ProgramClientTest {
 
     private static CreateProgramCommand command() {
         return new CreateProgramCommand("Asbestos Primary Program", "MASS_TORT",
-                LocalDate.of(2026, 1, 1), LocalDate.of(2027, 1, 1), LEAD_POLICY_ID);
+                LocalDate.of(2026, 1, 1), LocalDate.of(2027, 1, 1), LEAD_POLICY_ID,
+                new BigDecimal("25000000.0000"), "USD");
     }
 
     private static String programJson() {
+        return """
+                {
+                  "programId": "%s",
+                  "programNumber": "PRG-2026-0000001",
+                  "name": "Asbestos Primary Program",
+                  "programType": "MASS_TORT",
+                  "effectiveFrom": "2026-01-01",
+                  "effectiveTo": "2027-01-01",
+                  "status": "ACTIVE",
+                  "leadPolicyId": "%s",
+                  "capacityAmount": "25000000.0000",
+                  "capacityCurrency": "USD",
+                  "usedAmount": "10000000.0000",
+                  "utilizationPct": "40.0000",
+                  "policyCount": 4,
+                  "createdAt": "2026-10-20T12:00:00Z"
+                }
+                """.formatted(PROGRAM_ID, LEAD_POLICY_ID);
+    }
+
+    private static String programJsonWithoutCapacity() {
         return """
                 {
                   "programId": "%s",

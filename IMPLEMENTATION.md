@@ -13,8 +13,10 @@ the collections/ageing view, the installment dunning route records and reads the
 collections actions, the credit-note route requests, lists, and advances the
 billing credits raised by cancellations, endorsements, and audits, the mass
 tort profile route reads and replaces the allocation basis that Direct Claims
-uses, and the legal entity catalog exposes the carriers and service companies
-that issue or support the DIRECT book.
+uses, the legal entity catalog exposes the carriers and service companies
+that issue or support the DIRECT book, and the program catalog exposes the
+commercial portfolios with their optional capacity limit and derived capacity
+utilization.
 
 ## Structure
 
@@ -29,6 +31,9 @@ that issue or support the DIRECT book.
 | `PolicyCreditNoteController` / `PolicyCreditNoteService` | Policy `GET`/`POST .../credit-notes` and `PATCH .../status`; DIRECT-book guard |
 | `LegalEntityController` / `LegalEntityService` | Legal entity `POST`/`GET` catalog routes; DIRECT-book guard |
 | `PolicyLegalEntityController` / `PolicyLegalEntityService` | Policy issuer `PATCH` route; DIRECT-book guard |
+| `ProgramController` / `ProgramService` | Program `POST`/`GET` catalog routes; date and capacity-pair validation; DIRECT-book guard |
+| `ProgramDto` | Public program projection with the optional capacity limit and expert-derived aggregates |
+| `CreateProgramCommand` | Program create body; shape validation and the optional capacity pair |
 | `BillingPlan`, `BillingSummary`, `Installment` | Public billing projections and their credited/outstanding totals |
 | `LegalEntityDto` | Public legal entity projection |
 | `CreateLegalEntityCommand` | Legal entity create body; shape validation only |
@@ -139,6 +144,32 @@ missing policy is `404 POLICY_NOT_FOUND`, a policy without a profile is
 `409 CONCURRENT_MODIFICATION`. The expert side of this contract lives in
 `eia-policy-expert`; this repository contains the domain adapter only.
 
+## Program capacity expert contract
+
+The domain forwards `GET` and `POST /internal/v1/programs` and
+`GET /internal/v1/programs/{programId}` with `X-EIA-Tenant`,
+`X-EIA-Book: DIRECT`, and the `tenantId` query scope. `POST` sends
+`{name, programType, effectiveFrom, effectiveTo, leadPolicyId?,
+capacityAmount?, capacityCurrency?}`. The expert returns the flat program
+`{programId, programNumber, name, programType, effectiveFrom, effectiveTo,
+status, leadPolicyId, capacityAmount, capacityCurrency, usedAmount,
+utilizationPct, policyCount, createdAt}`; the domain accepts the expert's `id`
+identity and the SPEC/column aliases (`program_code`, `program_name`,
+`program_type`, `effective_from`, `effective_to`, `program_status`,
+`lead_policy_id`, `capacity_amount`, `capacity_currency`, `used_amount`,
+`utilization_pct`, `policy_count`, `created_at`). The capacity limit is an
+optional amount/currency pair; the domain rejects a supplied pair with one
+member missing as `400 VALIDATION_ERROR` (`CAPACITY_AMOUNT_REQUIRED` or
+`CAPACITY_CURRENCY_REQUIRED`), a non-positive amount as `MIN_VALUE`, and a
+malformed currency as `INVALID_FORMAT`. `usedAmount`, `utilizationPct`, and
+`policyCount` are expert-derived over the policies assigned to the program; the
+domain publishes them unchanged and tolerates an expert that omits them. The
+expert owns the program number, the type/status vocabulary, tenant-scoped
+uniqueness, the effective-date rules, the membership and lead-policy rules, and
+the capacity aggregates, so every create/assignment `400`, `404`, or `409`
+problem is preserved. The expert side of this contract lives in
+`eia-policy-expert`; this repository contains the domain adapter only.
+
 ## Legal entity expert contract
 
 The domain forwards `GET` and `POST /internal/v1/legal-entities` and
@@ -210,12 +241,21 @@ issuer assignment, and preserved `400`/`404`/`409` problems;
 validation, tenant/book handling, and problem propagation, and
 `PolicyLegalEntityControllerTest` covers the issuer assignment route, body
 validation, tenant/book handling, ETag echo, and problem propagation.
+`ProgramClientTest` uses `MockRestServiceServer` for the program tenant/DIRECT
+headers, the create payload with and without the capacity pair, the
+`id`/SPEC-column/capacity aliases, the capacity projection including an expert
+that omits the derived members, and preserved `400`/`404`/`409` problems;
+`ProgramControllerTest` covers the create/list/read routes, the capacity-pair
+validation, tenant/book handling, and problem propagation.
 
 ## Known SPEC gaps in this slice
 
 - The domain performs no independent business-rule validation for the second
   slice or billing; it validates request shape, page bounds, ETag syntax, and
-  idempotency keys, then relies on the expert for the SPEC invariants.
+  idempotency keys, then relies on the expert for the SPEC invariants. Program
+  capacity aggregates are likewise expert-derived; the domain forwards the
+  optional limit and publishes the returned used amount, utilization, and
+  policy count unchanged.
 - There is no transaction catalog or asynchronous orchestration; every command
   is a synchronous expert call.
 - Approvals are represented by `approvedBy` / `approvalRef` identifiers supplied
