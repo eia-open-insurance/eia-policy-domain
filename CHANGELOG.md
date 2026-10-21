@@ -63,6 +63,15 @@ The format is based on Keep a Changelog and the project uses Semantic Versioning
   tenant and `X-EIA-Book: DIRECT` are forwarded, non-DIRECT books are
   `404 BOOK_SCOPE_VIOLATION`, and expert `400`/`404`/`409` problems are
   preserved.
+- `GET`/`POST /api/v1/policies/{policyId}/credit-notes` and
+  `PATCH /api/v1/policies/{policyId}/credit-notes/{creditNoteId}/status`
+  request, list, and advance the policy's credit notes as the flat
+  `{creditNoteId, noteNumber, policyId, amount, currency, reason, status,
+  issuedAt, appliedAt, createdAt}` projection with the amount as a decimal
+  string. New notes start `DRAFT`; `ISSUED`/`APPLIED`/`CANCELLED` advance the
+  expert-owned lifecycle. The tenant and `X-EIA-Book: DIRECT` are forwarded,
+  non-DIRECT books are `404 BOOK_SCOPE_VIOLATION`, and expert
+  `400`/`404`/`409` problems are preserved.
 - `GET`/`PUT /api/v1/policies/{policyId}/mass-tort-profile` reads and replaces
   the mass tort profile `{profileId, policyId, tortType, triggerType,
   allocationMethod, allocationNotes, coverageBlockStart, coverageBlockEnd,

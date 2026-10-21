@@ -10,8 +10,10 @@ reinstatement, and renewal into a successor term. Billing adds the plan and
 installment schedule projection under the same tenant and DIRECT-book context.
 A cross-policy premium-receivable read projects installments as receivables for
 the collections/ageing view, the installment dunning route records and reads the
-collections actions, and the mass tort profile route reads and replaces the
-allocation basis that Direct Claims uses.
+collections actions, the credit-note route requests, lists, and advances the
+billing credits raised by cancellations, endorsements, and audits, and the mass
+tort profile route reads and replaces the allocation basis that Direct Claims
+uses.
 
 ## Structure
 
@@ -23,9 +25,13 @@ allocation basis that Direct Claims uses.
 | `PolicyMassTortProfileController` / `PolicyMassTortProfileService` | Mass tort profile read/replace route; DIRECT-book guard |
 | `ReceivableController` / `ReceivableService` | Cross-policy `GET /api/v1/billing/installments`; status/limit normalization |
 | `DunningController` / `DunningService` | Installment `GET`/`POST .../dunning`; DIRECT-book guard |
+| `PolicyCreditNoteController` / `PolicyCreditNoteService` | Policy `GET`/`POST .../credit-notes` and `PATCH .../status`; DIRECT-book guard |
 | `BillingPlan`, `Installment` | Public billing projections |
 | `DunningAction` | Public installment dunning projection |
 | `CreateDunningActionCommand` | Dunning action body; shape validation only |
+| `CreditNote` | Public credit-note projection |
+| `CreateCreditNoteCommand` | Credit-note request body; shape validation only |
+| `UpdateCreditNoteStatusCommand` | Credit-note status body; shape validation only |
 | `MassTortProfile` | Public mass tort profile projection |
 | `UpdateMassTortProfileCommand` | Mass tort profile replace body; shape validation only |
 | `Receivable`, `ReceivableSummary` | Public receivable projection and its totals |
@@ -63,6 +69,25 @@ installment is `409 INSTALLMENT_NOT_DUNNABLE` and a repeated level is
 `404 INSTALLMENT_NOT_FOUND`, and every `400` is a preserved expert problem.
 The expert side of this contract lives in `eia-policy-expert`; this repository
 contains the domain adapter only.
+
+## Policy credit-note expert contract
+
+The domain forwards `GET` and `POST /internal/v1/policies/{policyId}/credit-notes`
+and `PATCH /internal/v1/policies/{policyId}/credit-notes/{creditNoteId}/status`
+with `X-EIA-Tenant`, `X-EIA-Book: DIRECT`, and the `tenantId` query scope.
+`POST` sends `{amount, currency, reason?}`; `PATCH` sends `{status}`. The expert
+returns the flat note `{creditNoteId, noteNumber, policyId, amount, currency,
+reason, status, issuedAt, appliedAt, createdAt}`; the domain accepts the
+expert's `id` identity and SPEC column aliases (`note_number`, `policy_id`,
+`issued_at`, `applied_at`, `created_at`). `GET` returns the policy's notes
+newest first, or an empty array when none exists. The expert owns the note
+number, the `DRAFT`/`ISSUED`/`APPLIED`/`CANCELLED` lifecycle, the
+policy-currency match, the optional 500-character reason, the approval gate,
+and the SAP credit-memo reference, so an unknown currency is a preserved `400
+CURRENCY_MISMATCH`, a missing policy or note is `404 POLICY_NOT_FOUND` /
+`404 CREDIT_NOTE_NOT_FOUND`, and an out-of-order or terminal transition is
+`409 INVALID_CREDIT_NOTE_TRANSITION`. The expert side of this contract lives in
+`eia-policy-expert`; this repository contains the domain adapter only.
 
 ## Mass tort profile expert contract
 
@@ -112,6 +137,12 @@ the dunning tenant/DIRECT headers, the action payload, the `id` alias, and
 preserved `400`/`404`/`409` problems; `DunningControllerTest` covers the
 read/record routes, shape validation, tenant/book handling, and problem
 propagation, and `DunningServiceTest` covers the delegation.
+`PolicyCreditNoteClientTest` uses `MockRestServiceServer` for the credit-note
+tenant/DIRECT headers, the request and status payloads, the identity/column
+aliases, the newest-first list, and preserved `400`/`404`/`409` problems;
+`PolicyCreditNoteControllerTest` covers the list/request/status routes, shape
+validation, tenant/book handling, and problem propagation, and
+`PolicyCreditNoteServiceTest` covers the delegation.
 
 ## Known SPEC gaps in this slice
 
@@ -123,5 +154,5 @@ propagation, and `DunningServiceTest` covers the delegation.
 - Approvals are represented by `approvedBy` / `approvalRef` identifiers supplied
   by the caller; no approval workflow service is integrated.
 - The domain does not proxy occurrences, claims, reinsurance, billing accounts,
-  billing instructions, credit notes, disputes, commission statements, producer
-  payables, or lineage projections (SPEC 11.2.10/11.2.13) yet.
+  billing instructions, disputes, commission statements, producer payables, or
+  lineage projections (SPEC 11.2.10/11.2.13) yet.

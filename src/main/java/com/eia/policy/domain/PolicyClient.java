@@ -649,6 +649,76 @@ public class PolicyClient {
                 view.sentAt());
     }
 
+    // ------------------------------------------------------------------
+    // Policy credit notes (SPEC 11.2.13 billing and receivables). The
+    // expert owns the note number, the DRAFT/ISSUED/APPLIED/CANCELLED
+    // lifecycle, the policy-currency match, the approval gate, and the
+    // SAP credit-memo reference; the domain forwards the tenant and
+    // DIRECT book context on every call.
+    // ------------------------------------------------------------------
+
+    /** Lists the policy's credit notes, newest first. */
+    public List<CreditNote> findCreditNotes(UUID tenantId, UUID policyId) {
+        List<ExpertCreditNote> notes = call("list credit notes", () -> client.get()
+                .uri(uri -> uri.path("/internal/v1/policies/{id}/credit-notes")
+                        .queryParam("tenantId", tenantId)
+                        .build(policyId))
+                .header(TENANT_HEADER, tenantId.toString())
+                .header(BookScope.BOOK_HEADER, BookScope.DIRECT)
+                .retrieve()
+                .body(new ParameterizedTypeReference<List<ExpertCreditNote>>() {
+                }));
+        if (notes == null) {
+            throw new ApiException(HttpStatus.BAD_GATEWAY, "EXPERT_BAD_RESPONSE",
+                    "Policy expert returned an empty response");
+        }
+        return notes.stream()
+                .filter(Objects::nonNull)
+                .map(PolicyClient::toCreditNote)
+                .toList();
+    }
+
+    /** Requests one credit note against the policy. */
+    public CreditNote createCreditNote(UUID tenantId, UUID policyId,
+                                       CreateCreditNoteCommand command) {
+        ExpertCreditNote view = call("create credit note", () -> client.post()
+                .uri(uri -> uri.path("/internal/v1/policies/{id}/credit-notes")
+                        .queryParam("tenantId", tenantId)
+                        .build(policyId))
+                .header(TENANT_HEADER, tenantId.toString())
+                .header(BookScope.BOOK_HEADER, BookScope.DIRECT)
+                .body(command)
+                .retrieve()
+                .body(ExpertCreditNote.class));
+        return toCreditNote(view);
+    }
+
+    /** Advances one credit note through the expert-owned status lifecycle. */
+    public CreditNote updateCreditNoteStatus(UUID tenantId, UUID policyId, UUID creditNoteId,
+                                             UpdateCreditNoteStatusCommand command) {
+        ExpertCreditNote view = call("update credit note status", () -> client.patch()
+                .uri(uri -> uri.path(
+                                "/internal/v1/policies/{id}/credit-notes/{creditNoteId}/status")
+                        .queryParam("tenantId", tenantId)
+                        .build(policyId, creditNoteId))
+                .header(TENANT_HEADER, tenantId.toString())
+                .header(BookScope.BOOK_HEADER, BookScope.DIRECT)
+                .body(command)
+                .retrieve()
+                .body(ExpertCreditNote.class));
+        return toCreditNote(view);
+    }
+
+    private static CreditNote toCreditNote(ExpertCreditNote view) {
+        if (view == null) {
+            throw new ApiException(HttpStatus.BAD_GATEWAY, "EXPERT_BAD_RESPONSE",
+                    "Policy expert returned an empty response");
+        }
+        return new CreditNote(view.creditNoteId(), view.noteNumber(), view.policyId(),
+                view.amount(), view.currency(), view.reason(), view.status(),
+                view.issuedAt(), view.appliedAt(), view.createdAt());
+    }
+
     /**
      * The expert returns the plan under {@code plan} plus a separate ordered
      * installment list; the public projection is flat.
@@ -1027,6 +1097,26 @@ public class PolicyClient {
             String notes,
             String status,
             Instant sentAt
+    ) {
+    }
+
+    /**
+     * Wire shape of one expert credit note. The public projection is flat; the
+     * aliases accept the expert's {@code id} identity and the SPEC column names
+     * while the internal expert contract settles.
+     */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record ExpertCreditNote(
+            @JsonAlias({"id", "credit_note_id"}) UUID creditNoteId,
+            @JsonAlias({"note_number", "creditNoteNumber"}) String noteNumber,
+            @JsonAlias("policy_id") UUID policyId,
+            BigDecimal amount,
+            String currency,
+            String reason,
+            String status,
+            @JsonAlias("issued_at") Instant issuedAt,
+            @JsonAlias("applied_at") Instant appliedAt,
+            @JsonAlias("created_at") Instant createdAt
     ) {
     }
 }

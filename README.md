@@ -47,6 +47,8 @@ All additive under `/api/v1/policies/{policyId}`:
 | `POST` | `/renew` | Renew into a successor term |
 | `GET`/`POST` | `/billing` | Billing plan and installments / create the plan |
 | `PATCH` | `/billing/installments/{installmentId}` | Record an installment's payment state |
+| `GET`/`POST` | `/credit-notes` | Credit note list / request a credit note |
+| `PATCH` | `/credit-notes/{creditNoteId}/status` | Advance a credit note's status |
 
 The expert status, code, `category`, field errors, and `meta` are preserved, so
 `422 BUSINESS_RULE`, `428 APPROVAL_REQUIRED`, and `409` conflicts reach the
@@ -108,6 +110,26 @@ domain validates the request shape, forwards `X-EIA-Tenant` and `X-EIA-Book:
 DIRECT` on every call, and rejects a supplied non-DIRECT book with `404
 BOOK_SCOPE_VIOLATION`. Expert `400`, `404`, and `409` problems reach the caller
 unchanged.
+
+### Policy credit notes
+
+`GET /api/v1/policies/{policyId}/credit-notes` returns the policy's credit
+notes newest first as an array of the flat projection `{creditNoteId,
+noteNumber, policyId, amount, currency, reason, status, issuedAt, appliedAt,
+createdAt}`; `amount` is a scale-preserving decimal string. `POST` requests a
+note from `{amount, currency, reason?}` and returns `201` with the stored
+projection; the note starts in the expert-owned `DRAFT` state, `currency` must
+match the policy premium currency, and `reason` is optional and capped at 500
+characters. `PATCH /credit-notes/{creditNoteId}/status` accepts `{status}` and
+returns the updated projection, with `issuedAt` set on `ISSUED` and `appliedAt`
+set on `APPLIED`. The expert owns the note number, the `DRAFT`/`ISSUED`/
+`APPLIED`/`CANCELLED` lifecycle, the approval gate, the transition rules, and
+the SAP credit-memo reference. The domain validates the request shape, forwards
+`X-EIA-Tenant` and `X-EIA-Book: DIRECT` on every call, and rejects a supplied
+non-DIRECT book with `404 BOOK_SCOPE_VIOLATION`. Expert `400`, `404`, and `409`
+problems reach the caller unchanged; a missing policy is `404 POLICY_NOT_FOUND`,
+a missing note is `404 CREDIT_NOTE_NOT_FOUND`, and an out-of-order or terminal
+transition is `409 INVALID_CREDIT_NOTE_TRANSITION`.
 
 ### Policy renewal
 
