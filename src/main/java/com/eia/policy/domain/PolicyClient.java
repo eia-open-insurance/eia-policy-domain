@@ -407,6 +407,64 @@ public class PolicyClient {
     }
 
     // ------------------------------------------------------------------
+    // Policy rating (SPEC 11.2.14 rating reproducibility / RATE-02). The
+    // expert owns the rating methods, the DRAFT/QUOTED gate, the premium
+    // computation, the canonical hash, and the applied-policy version; the
+    // domain forwards the tenant, DIRECT book, optional If-Match, and
+    // optional Idempotency-Key on every write.
+    // ------------------------------------------------------------------
+
+    /**
+     * Calculates and persists one rating worksheet. When the command applies
+     * the rating, the expert returns the refreshed policy in the same
+     * {@code {worksheet, policy}} envelope and sets the policy ETag; a
+     * calculation-only request returns the worksheet alone.
+     */
+    public Mutation<PolicyRatingResult> ratePolicy(
+            UUID tenantId, UUID policyId, RatePolicyCommand command, String ifMatch,
+            String idempotencyKey) {
+        ResponseEntity<PolicyRatingResult> response = callEntity("rate policy", () -> {
+            RestClient.RequestBodySpec spec = client.post()
+                    .uri(uri -> uri.path("/internal/v1/policies/{id}/rating")
+                            .queryParam("tenantId", tenantId)
+                            .build(policyId))
+                    .header(TENANT_HEADER, tenantId.toString())
+                    .header(BookScope.BOOK_HEADER, BookScope.DIRECT);
+            if (ifMatch != null && !ifMatch.isBlank()) {
+                spec = spec.header(HttpHeaders.IF_MATCH, ifMatch);
+            }
+            if (idempotencyKey != null && !idempotencyKey.isBlank()) {
+                spec = spec.header("Idempotency-Key", idempotencyKey);
+            }
+            return spec.body(command).retrieve().toEntity(PolicyRatingResult.class);
+        });
+        if (response.getBody() == null || response.getBody().worksheet() == null
+                || response.getBody().worksheet().id() == null
+                || response.getBody().worksheet().policyId() == null) {
+            throw new ApiException(HttpStatus.BAD_GATEWAY, "EXPERT_BAD_RESPONSE",
+                    "Policy expert returned an empty response");
+        }
+        return Mutation.of(response);
+    }
+
+    /** Returns the newest rating worksheet for the policy. */
+    public RatingWorksheetDto findLatestRating(UUID tenantId, UUID policyId) {
+        RatingWorksheetDto worksheet = call("get latest policy rating", () -> client.get()
+                .uri(uri -> uri.path("/internal/v1/policies/{id}/rating")
+                        .queryParam("tenantId", tenantId)
+                        .build(policyId))
+                .header(TENANT_HEADER, tenantId.toString())
+                .header(BookScope.BOOK_HEADER, BookScope.DIRECT)
+                .retrieve()
+                .body(RatingWorksheetDto.class));
+        if (worksheet == null || worksheet.id() == null || worksheet.policyId() == null) {
+            throw new ApiException(HttpStatus.BAD_GATEWAY, "EXPERT_BAD_RESPONSE",
+                    "Policy expert returned an empty response");
+        }
+        return worksheet;
+    }
+
+    // ------------------------------------------------------------------
     // Billing plan and installment schedule. The expert owns billing
     // (SPEC 11.2.13); the domain forwards the tenant and DIRECT book
     // context on every call.

@@ -116,6 +116,35 @@ tenant query scope, `X-EIA-Tenant`, `X-EIA-Book: DIRECT`, the optional
 `404`, and `409` problems. A supplied non-DIRECT book is `404
 BOOK_SCOPE_VIOLATION`; an absent book is accepted for compatibility.
 
+### Policy rating
+
+`POST /api/v1/policies/{policyId}/rating` records one immutable rating
+worksheet from `{ratingMethod, baseRate, exposureAmount?, factor?, apply?}` and
+returns `201` with the `{worksheet, policy?}` envelope. `ratingMethod` is
+`RATE_TIMES_EXPOSURE` (base rate × exposure × factor) or `FLAT` (base rate ×
+factor); `baseRate` must be non-negative, `exposureAmount` is required and
+strictly positive for `RATE_TIMES_EXPOSURE`, and `factor` defaults to `1` and
+must be non-negative. `apply` defaults to `false`: the calculation is always
+persisted, but only `apply: true` replaces the policy premium, bumps the
+aggregate version, and emits `policy.policy.rated`. The applied response also
+carries the refreshed `PolicyDto` and the expert ETag.
+
+`GET` on the same path returns the newest worksheet: `{id, tenantId, policyId,
+ratingMethod, baseRate, exposureAmount, factor, computedPremium, currency,
+calcHash, status, createdAt, createdBy}`. `exposureAmount` is null for `FLAT`;
+`computedPremium` is rounded once to four fraction digits; `calcHash` is the
+canonical SHA-256 over the normalized inputs and result, so a later read can
+reproduce the premium. The expert owns the methods, the DRAFT/QUOTED gate, the
+calculation, the hash, the worksheet history, and the applied version; only a
+`DRAFT` or `QUOTED` policy is rateable, otherwise `409 POLICY_NOT_RATEABLE`.
+The domain validates the request shape, forwards `X-EIA-Tenant`,
+`X-EIA-Book: DIRECT`, the optional `If-Match`, and the optional
+`Idempotency-Key`, echoes the expert `ETag` (falling back to the applied
+policy's version), and preserves expert `400`, `404`, and `409` problems. A
+missing policy is `404 POLICY_NOT_FOUND`, a missing worksheet is `404
+RATING_WORKSHEET_NOT_FOUND`, and a supplied non-DIRECT book is `404
+BOOK_SCOPE_VIOLATION`.
+
 ### Premium receivables
 
 `GET /api/v1/billing/installments?status=&dueBefore=&limit=` lists the
@@ -361,7 +390,8 @@ The service listens on port 8084. Every request requires `X-EIA-Tenant`.
 - `PATCH /api/v1/policies/{policyId}/legal-entity`
 - `POST /api/v1/policies/{id}/coverages`, `/erosion`, `/endorsements`,
   `/insureds`, `/locations`, `/cancel`, `/reinstate`, `/renew`, `/billing`,
-  `/billing/adjustment`
+  `/billing/adjustment`, `/rating`
+- `GET /api/v1/policies/{id}/rating`
 - `PATCH /api/v1/policies/{id}/billing/installments/{installmentId}`
 - `GET /api/v1/billing/installments?status=&dueBefore=&limit=`
 - `GET`/`POST /api/v1/billing/installments/{installmentId}/dunning`
