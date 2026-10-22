@@ -684,6 +684,166 @@ public class PolicyClient {
     }
 
     // ------------------------------------------------------------------
+    // Product catalog (SPEC 11.2.14). The expert owns the product-line
+    // vocabulary, tenant-scoped code uniqueness, the ACTIVE/RETIRED
+    // lifecycle and version, and the catalog search; the domain forwards
+    // the tenant and DIRECT book context on every call.
+    // ------------------------------------------------------------------
+
+    /**
+     * Lists or searches the tenant's products. The optional {@code q} and
+     * {@code status} filters are forwarded unchanged so the expert owns the
+     * matching, ordering, and vocabulary; a blank filter is omitted.
+     */
+    public List<ProductDto> findProducts(UUID tenantId, String q, String status) {
+        JsonNode body = call("list products", () -> client.get()
+                .uri(uri -> {
+                    uri.path("/internal/v1/products")
+                            .queryParam("tenantId", tenantId);
+                    if (q != null && !q.isBlank()) {
+                        uri.queryParam("q", q);
+                    }
+                    if (status != null && !status.isBlank()) {
+                        uri.queryParam("status", status);
+                    }
+                    return uri.build();
+                })
+                .header(TENANT_HEADER, tenantId.toString())
+                .header(BookScope.BOOK_HEADER, BookScope.DIRECT)
+                .retrieve()
+                .body(JsonNode.class), "PRODUCT_NOT_FOUND");
+        return productItems(body).stream()
+                .map(PolicyClient::toProduct)
+                .toList();
+    }
+
+    /** Reads one product, preserving the expert ETag. */
+    public Mutation<ProductDto> findProduct(UUID tenantId, UUID productId) {
+        ResponseEntity<JsonNode> response = callEntity("get product", () -> client.get()
+                .uri(uri -> uri.path("/internal/v1/products/{productId}")
+                        .queryParam("tenantId", tenantId)
+                        .build(productId))
+                .header(TENANT_HEADER, tenantId.toString())
+                .header(BookScope.BOOK_HEADER, BookScope.DIRECT)
+                .retrieve()
+                .toEntity(JsonNode.class), "PRODUCT_NOT_FOUND");
+        return productMutation(response);
+    }
+
+    /**
+     * Creates one ACTIVE product. The identity, status, version, and timestamps
+     * are expert-owned; the domain forwards the caller's catalog fields and
+     * echoes the expert ETag.
+     */
+    public Mutation<ProductDto> createProduct(UUID tenantId, CreateProductCommand command) {
+        ResponseEntity<JsonNode> response = callEntity("create product", () -> client.post()
+                .uri(uri -> uri.path("/internal/v1/products")
+                        .queryParam("tenantId", tenantId)
+                        .build())
+                .header(TENANT_HEADER, tenantId.toString())
+                .header(BookScope.BOOK_HEADER, BookScope.DIRECT)
+                .body(command)
+                .retrieve()
+                .toEntity(JsonNode.class), "PRODUCT_NOT_FOUND");
+        return productMutation(response);
+    }
+
+    /**
+     * Retires or reactivates one product. The expert owns the ACTIVE/RETIRED
+     * vocabulary, treats a replay of the current status as an idempotent no-op,
+     * and reports a concurrent writer as a preserved 409.
+     */
+    public Mutation<ProductDto> updateProductStatus(UUID tenantId, UUID productId,
+                                                    UpdateProductStatusCommand command) {
+        ResponseEntity<JsonNode> response = callEntity(
+                "update product status", () -> client.patch()
+                        .uri(uri -> uri.path("/internal/v1/products/{productId}/status")
+                                .queryParam("tenantId", tenantId)
+                                .build(productId))                        .header(TENANT_HEADER, tenantId.toString())
+                        .header(BookScope.BOOK_HEADER, BookScope.DIRECT)
+                        .body(command)
+                        .retrieve()
+                        .toEntity(JsonNode.class), "PRODUCT_NOT_FOUND");
+        return productMutation(response);
+    }
+
+    /**
+     * Accepts the two list shapes an expert may return during rollout: a bare
+     * array, or a page envelope whose {@code items} (or {@code products})
+     * member carries the array.
+     */
+    private List<ExpertProduct> productItems(JsonNode body) {
+        if (body == null || body.isNull()) {
+            throw badExpertResponse();
+        }
+        JsonNode items = body;
+        if (body.isObject()) {
+            items = body.get("items");
+            if (items == null || items.isNull()) {
+                items = body.get("products");
+            }
+        }
+        if (items == null || !items.isArray()) {
+            throw badExpertResponse();
+        }
+        List<ExpertProduct> products = new ArrayList<>();
+        for (JsonNode item : items) {
+            if (item == null || item.isNull()) {
+                continue;
+            }
+            try {
+                products.add(objectMapper.treeToValue(item, ExpertProduct.class));
+            } catch (JsonProcessingException | IllegalArgumentException ex) {
+                throw badExpertResponse();
+            }
+        }
+        return products;
+    }
+
+    /**
+     * Accepts the two single-product shapes an expert may return: the bare
+     * canonical row, or an envelope whose {@code product} member carries it.
+     */
+    private ExpertProduct productView(JsonNode body) {
+        if (body == null || body.isNull()) {
+            throw badExpertResponse();
+        }
+        JsonNode view = body;
+        if (body.isObject()) {
+            JsonNode wrapped = body.get("product");
+            if (wrapped != null && !wrapped.isNull()) {
+                view = wrapped;
+            }
+        }
+        if (view == null || !view.isObject()) {
+            throw badExpertResponse();
+        }
+        try {
+            return objectMapper.treeToValue(view, ExpertProduct.class);
+        } catch (JsonProcessingException | IllegalArgumentException ex) {
+            throw badExpertResponse();
+        }
+    }
+
+    private Mutation<ProductDto> productMutation(ResponseEntity<JsonNode> response) {
+        if (response.getBody() == null) {
+            throw badExpertResponse();
+        }
+        ProductDto product = toProduct(productView(response.getBody()));
+        return new Mutation<>(product, response.getHeaders().getETag(),
+                isReplayed(response));
+    }
+
+    private static ProductDto toProduct(ExpertProduct view) {
+        if (view == null || view.productId() == null) {
+            throw badExpertResponse();
+        }
+        return new ProductDto(view.productId(), view.productCode(), view.productName(),
+                view.productLine(), view.jurisdiction(), view.status(), view.version(),
+                view.createdAt(), view.updatedAt());
+    }
+
+    // ------------------------------------------------------------------
     // Legal entity catalog and issuing-legal-entity membership (SPEC
     // 10.11.2, 11.2.16). The expert owns the entity code, the entity-type
     // and status vocabularies, tenant-scoped uniqueness, and the license
@@ -1432,10 +1592,16 @@ public class PolicyClient {
 
     private <T> ResponseEntity<T> callEntity(String operation,
                                              Supplier<ResponseEntity<T>> invocation) {
+        return callEntity(operation, invocation, "POLICY_NOT_FOUND");
+    }
+
+    private <T> ResponseEntity<T> callEntity(String operation,
+                                             Supplier<ResponseEntity<T>> invocation,
+                                             String notFoundFallback) {
         try {
             return invocation.get();
         } catch (RestClientResponseException ex) {
-            throw translate(operation, ex);
+            throw translate(operation, ex, notFoundFallback);
         } catch (ResourceAccessException ex) {
             LOG.warn("Policy expert is unreachable during {}", operation, ex);
             throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "EXPERT_UNAVAILABLE",
@@ -1456,10 +1622,14 @@ public class PolicyClient {
     }
 
     private <T> T call(String operation, Supplier<T> invocation) {
+        return call(operation, invocation, "POLICY_NOT_FOUND");
+    }
+
+    private <T> T call(String operation, Supplier<T> invocation, String notFoundFallback) {
         try {
             return invocation.get();
         } catch (RestClientResponseException ex) {
-            throw translate(operation, ex);
+            throw translate(operation, ex, notFoundFallback);
         } catch (ResourceAccessException ex) {
             LOG.warn("Policy expert is unreachable during {}", operation, ex);
             throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "EXPERT_UNAVAILABLE",
@@ -1472,6 +1642,11 @@ public class PolicyClient {
     }
 
     private ApiException translate(String operation, RestClientResponseException ex) {
+        return translate(operation, ex, "POLICY_NOT_FOUND");
+    }
+
+    private ApiException translate(String operation, RestClientResponseException ex,
+                                   String notFoundFallback) {
         int rawStatus = ex.getStatusCode().value();
         HttpStatus status = HttpStatus.resolve(rawStatus);
         JsonNode body = readBody(ex);
@@ -1485,7 +1660,7 @@ public class PolicyClient {
 
         if (rawStatus == HttpStatus.NOT_FOUND.value()) {
             String code = expertCode == null || expertCode.isBlank()
-                    ? "POLICY_NOT_FOUND" : expertCode;
+                    ? notFoundFallback : expertCode;
             return new ApiException(HttpStatus.NOT_FOUND, code, message, issues, meta);
         }
         if (rawStatus == HttpStatus.CONFLICT.value()) {
@@ -1691,6 +1866,26 @@ public class PolicyClient {
             @JsonAlias("coverage_block_start") LocalDate coverageBlockStart,
             @JsonAlias("coverage_block_end") LocalDate coverageBlockEnd,
             String status,
+            @JsonAlias("updated_at") Instant updatedAt
+    ) {
+    }
+
+    /**
+     * Wire shape of one expert product. The public projection is flat; the
+     * aliases accept the expert's {@code id} identity and the SPEC column
+     * names. The version is optional so an older expert still returns a usable
+     * catalog row.
+     */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record ExpertProduct(
+            @JsonAlias({"id", "product_id"}) UUID productId,
+            @JsonAlias({"code", "product_code"}) String productCode,
+            @JsonAlias({"name", "product_name"}) String productName,
+            @JsonAlias({"line", "product_line"}) String productLine,
+            String jurisdiction,
+            String status,
+            Integer version,
+            @JsonAlias("created_at") Instant createdAt,
             @JsonAlias("updated_at") Instant updatedAt
     ) {
     }

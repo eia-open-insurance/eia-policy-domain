@@ -310,6 +310,32 @@ non-DIRECT book with `404 BOOK_SCOPE_VIOLATION`. Expert `400`, `404`, and `409`
 problems reach the caller unchanged; a policy without a profile is
 `404 MASS_TORT_PROFILE_NOT_FOUND`.
 
+### Products
+
+`POST /api/v1/products` creates an ACTIVE product from `{productCode,
+productName, productLine, jurisdiction}` and returns `201` with the flat
+projection `{productId, productCode, productName, productLine, jurisdiction,
+status, version, createdAt, updatedAt}` and its strong `ETag`. The short body
+aliases `code`, `name`, and `line` are accepted. `GET /api/v1/products?q=&status=`
+returns the tenant's catalog as an array ordered by product code; `q` is a
+case-insensitive contains over the product code and name, and `status` is
+`ACTIVE` or `RETIRED`. `GET /api/v1/products/search` is an alias for the same
+filtered read, and `GET /api/v1/products/{productId}` returns one product with
+its ETag. `PATCH /api/v1/products/{productId}/status` accepts `{status}` and
+retires or reactivates the product; replaying the current status is an
+idempotent no-op, while each accepted change advances `version` and the ETag.
+
+The Policy expert owns the product-line vocabulary (`CGL`,
+`PRODUCTS_LIABILITY`, `UMBRELLA`, `EXCESS`, `OTHER`), the two-letter ISO
+jurisdiction, the upper-case code and line normalization, the code and name
+caps, tenant-scoped code uniqueness, and the ACTIVE/RETIRED lifecycle. The
+domain validates only the request shape, forwards `X-EIA-Tenant` and
+`X-EIA-Book: DIRECT` on every call, and rejects a supplied non-DIRECT book with
+`404 BOOK_SCOPE_VIOLATION`; an absent book is accepted. Expert `400`, `404`, and
+`409` problems reach the caller unchanged: a missing product is
+`404 PRODUCT_NOT_FOUND`, a duplicate code is `409 DUPLICATE_PRODUCT_CODE`, and a
+concurrent status change is `409 CONCURRENT_MODIFICATION`.
+
 ### Programs
 
 `POST /api/v1/programs` creates a program from `{name, programType,
@@ -431,6 +457,9 @@ The service listens on port 8084. Every request requires `X-EIA-Tenant`.
   `/limits`, `/aggregate-state`, `/endorsements`, `/insureds`, `/locations`,
   `/cancellations`, `/reinstatements`
 - `GET`/`PUT /api/v1/policies/{id}/mass-tort-profile`
+- `POST`/`GET /api/v1/products`, `GET /api/v1/products/search`,
+  `GET /api/v1/products/{productId}`,
+  `PATCH /api/v1/products/{productId}/status`
 - `POST`/`GET /api/v1/programs`, `GET /api/v1/programs/{programId}`
 - `PATCH /api/v1/policies/{policyId}/program`
 - `POST`/`GET /api/v1/legal-entities`, `GET /api/v1/legal-entities/{legalEntityId}`

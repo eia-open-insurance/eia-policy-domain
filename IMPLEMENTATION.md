@@ -21,9 +21,10 @@ collections actions, the credit-note route requests, lists, advances, and revers
 the billing credits raised by cancellations, endorsements, and audits, the mass
 tort profile route reads and replaces the allocation basis that Direct Claims
 uses, the legal entity catalog exposes the carriers and service companies
-that issue or support the DIRECT book, and the program catalog exposes the
+that issue or support the DIRECT book, the program catalog exposes the
 commercial portfolios with their optional capacity limit and derived capacity
-utilization.
+utilization, and the product catalog exposes the sellable taxonomy that
+policies and underwriting submissions reference by product code.
 
 ## Structure
 
@@ -38,6 +39,10 @@ utilization.
 | `DunningController` / `DunningService` | Installment `GET`/`POST .../dunning`; DIRECT-book guard |
 | `PolicyCreditNoteController` / `PolicyCreditNoteService` | Policy `GET`/`POST .../credit-notes` and `PATCH .../status`; DIRECT-book guard |
 | `LegalEntityController` / `LegalEntityService` | Legal entity `POST`/`GET` catalog routes; DIRECT-book guard |
+| `ProductController` / `ProductService` | Product `GET`/`POST` catalog routes plus the status `PATCH`; DIRECT-book guard |
+| `ProductDto` | Public product projection with the ACTIVE/RETIRED status and aggregate version |
+| `CreateProductCommand` | Product create body; shape validation and short aliases |
+| `UpdateProductStatusCommand` | Product status body; shape validation only |
 | `PolicyLegalEntityController` / `PolicyLegalEntityService` | Policy issuer `PATCH` route; DIRECT-book guard |
 | `ProgramController` / `ProgramService` | Program `POST`/`GET` catalog routes; date and capacity-pair validation; DIRECT-book guard |
 | `SubmissionController` / `SubmissionService` | Underwriting submission list/read/create/status/convert routes; DIRECT-book guard and idempotency normalization |
@@ -224,6 +229,35 @@ missing policy is `404 POLICY_NOT_FOUND`, a policy without a profile is
 `409 CONCURRENT_MODIFICATION`. The expert side of this contract lives in
 `eia-policy-expert`; this repository contains the domain adapter only.
 
+## Product catalog expert contract
+
+The domain forwards `GET` and `POST /internal/v1/products`,
+`GET /internal/v1/products/{productId}`, and
+`PATCH /internal/v1/products/{productId}/status` with `X-EIA-Tenant`,
+`X-EIA-Book: DIRECT`, and the `tenantId` query scope. `GET` forwards the
+optional `q` (case-insensitive code/name substring) and `status` (ACTIVE or
+RETIRED) filters and returns the tenant's products as an array ordered by
+product code, or an empty array. `POST` sends `{productCode, productName,
+productLine, jurisdiction}` and the expert creates an ACTIVE product; the
+public body also accepts the `code`, `name`, and `line` aliases. `PATCH` sends
+`{status}` and retires or reactivates the product.
+
+The expert returns the flat product `{productId, productCode, productName,
+productLine, jurisdiction, status, version, createdAt, updatedAt}`; the domain
+accepts the expert's `id` identity and the SPEC column aliases (`product_id`,
+`product_code`, `product_name`, `product_line`, `created_at`, `updated_at`) as
+well as a bare row, a `{product}` envelope, a bare array, or an `{items}` page.
+`version` is the aggregate sequence and backs the strong `ETag` on reads,
+creates, and status changes; the domain falls back to `version` when an older
+expert omits the header. The expert owns the product-line and status
+vocabularies, the two-letter ISO jurisdiction, the upper-case code/line
+normalization, the code and name caps, tenant-scoped code uniqueness, and the
+ACTIVE/RETIRED lifecycle, so its `400`/`404`/`409` problems are preserved: a
+missing product is `404 PRODUCT_NOT_FOUND`, a duplicate code is
+`409 DUPLICATE_PRODUCT_CODE`, and a concurrent status change is
+`409 CONCURRENT_MODIFICATION`. The expert side of this contract lives in
+`eia-policy-expert`; this repository contains the domain adapter only.
+
 ## Program capacity expert contract
 
 The domain forwards `GET` and `POST /internal/v1/programs` and
@@ -403,6 +437,14 @@ headers, the create payload with and without the capacity pair, the
 that omits the derived members, and preserved `400`/`404`/`409` problems;
 `ProgramControllerTest` covers the create/list/read routes, the capacity-pair
 validation, tenant/book handling, and problem propagation.
+`ProductClientTest` uses `MockRestServiceServer` for the product tenant/DIRECT
+headers, the `q`/`status` query, the create and status payloads, the bare and
+`{items}`/`{product}` expert shapes, the `id`/SPEC-column aliases, ETag
+forwarding, and preserved `400`/`404`/`409` problems including the bare-404
+`PRODUCT_NOT_FOUND` fallback; `ProductControllerTest` covers the list/search/
+read/create/status routes, the short-body aliases, shape validation,
+tenant/book handling, the ETag fallback, and problem propagation, and
+`ProductServiceTest` covers filter normalization and delegation.
 `SubmissionClientTest` uses `MockRestServiceServer` for the underwriting
 submission tenant/DIRECT headers, the canonical projection and tenant fallback,
 the bare-array and `{items}` list shapes, the bare and `{submission}` single-row

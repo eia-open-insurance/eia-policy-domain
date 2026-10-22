@@ -177,6 +177,17 @@ The format is based on Keep a Changelog and the project uses Semantic Versioning
   and the optional `Idempotency-Key` are forwarded; a fresh audit is `201`, an
   expert replay is published as `200` with `Idempotent-Replayed: true`, and
   expert `400`/`404`/`409` problems are preserved.
+- Product catalog proxy: `GET /api/v1/products?q=&status=`,
+  `GET /api/v1/products/search`, `GET /api/v1/products/{productId}`,
+  `POST /api/v1/products`, and `PATCH /api/v1/products/{productId}/status`.
+  Products project as `{productId, productCode, productName, productLine,
+  jurisdiction, status, version, createdAt, updatedAt}`; the list is a bare
+  array ordered by product code, the create body is `{productCode, productName,
+  productLine, jurisdiction}` (with `code`/`name`/`line` aliases), and the
+  status body is `{status}`. `version` backs the strong `ETag`. The tenant and
+  `X-EIA-Book: DIRECT` are forwarded, non-DIRECT books are `404
+  BOOK_SCOPE_VIOLATION`, and expert `400`/`404`/`409` problems are preserved
+  (missing product, duplicate code, and concurrent status change).
 
 ### Changed
 
