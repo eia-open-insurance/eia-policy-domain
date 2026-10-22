@@ -132,6 +132,36 @@ class PolicyBillingClientTest {
     }
 
     @Test
+    void restoresTheCreditedPremiumWhenACreditNoteIsReversed() {
+        RestClient.Builder builder = builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        PolicyClient client = new PolicyClient(builder, new ObjectMapper(), BASE);
+
+        server.expect(requestTo(BILLING + "?tenantId=" + TENANT))
+                .andExpect(method(HttpMethod.GET))
+                .andExpect(header("X-EIA-Tenant", TENANT.toString()))
+                .andExpect(header("X-EIA-Book", "DIRECT"))
+                .andRespond(withStatus(HttpStatus.OK)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body(reversalPlanJson()));
+
+        BillingPlan plan = client.findBillingPlan(TENANT, POLICY_ID);
+
+        assertThat(plan.installments()).hasSize(2);
+        assertThat(plan.installments().get(1).status()).isEqualTo("DUE");
+        assertThat(plan.installments().get(1).creditedAmount()).isEqualByComparingTo("0.0000");
+        assertThat(plan.installments().get(1).outstandingAmount())
+                .isEqualByComparingTo("6000.0000");
+        assertThat(plan.summary()).satisfies(summary -> {
+            assertThat(summary.totalAmount()).isEqualByComparingTo("12000.0000");
+            assertThat(summary.creditedAmount()).isEqualByComparingTo("0");
+            assertThat(summary.outstandingAmount()).isEqualByComparingTo("6000.0000");
+            assertThat(summary.installmentCount()).isEqualTo(2);
+        });
+        server.verify();
+    }
+
+    @Test
     void postsTheCreatePayloadWithTenantAndDirectBook() {
         RestClient.Builder builder = builder();
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
@@ -380,6 +410,50 @@ class PolicyBillingClientTest {
                     "waivedAmount": "0.0000",
                     "creditedAmount": "1000.0000",
                     "outstandingAmount": "5000.0000",
+                    "overdueAmount": "0.0000",
+                    "currency": "USD",
+                    "installmentCount": 2
+                  }
+                }
+                """.formatted(PLAN_ID, TENANT, POLICY_ID, INSTALLMENT_ID, TENANT, PLAN_ID,
+                PAYMENT_ID, TENANT, PLAN_ID);
+    }
+
+    private static String reversalPlanJson() {
+        return """
+                {
+                  "plan": {
+                    "id": "%s",
+                    "tenantId": "%s",
+                    "policyId": "%s",
+                    "planNumber": "BP-2026-0001",
+                    "totalPremium": "12000.0000",
+                    "currency": "USD",
+                    "installmentCount": 2,
+                    "frequency": "SEMI_ANNUAL",
+                    "firstDueDate": "2026-01-15",
+                    "status": "ACTIVE",
+                    "createdAt": "2026-01-01T00:00:00Z"
+                  },
+                  "installments": [
+                    {"id": "%s", "tenantId": "%s", "planId": "%s",
+                     "installmentNumber": 1, "dueDate": "2026-01-15",
+                     "amount": "6000.0000", "creditedAmount": "0.0000",
+                     "outstandingAmount": "0.0000", "status": "PAID",
+                     "paidAt": "2026-01-15T12:00:00Z", "paymentId": "%s",
+                     "createdAt": "2026-01-01T00:00:00Z"},
+                    {"id": "dddddddd-dddd-7ddd-8ddd-dddddddddddd", "tenantId": "%s",
+                     "planId": "%s", "installmentNumber": 2, "dueDate": "2026-07-15",
+                     "amount": "6000.0000", "creditedAmount": "0.0000",
+                     "outstandingAmount": "6000.0000", "status": "DUE", "paidAt": null,
+                     "paymentId": null, "createdAt": "2026-01-01T00:00:00Z"}
+                  ],
+                  "summary": {
+                    "totalAmount": "12000.0000",
+                    "paidAmount": "6000.0000",
+                    "waivedAmount": "0.0000",
+                    "creditedAmount": "0.0000",
+                    "outstandingAmount": "6000.0000",
                     "overdueAmount": "0.0000",
                     "currency": "USD",
                     "installmentCount": 2

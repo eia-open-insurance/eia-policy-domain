@@ -190,6 +190,36 @@ class PolicyCreditNoteControllerTest {
     }
 
     @Test
+    void reversesTheCreditNoteWithAReason() throws Exception {
+        UpdateCreditNoteStatusCommand command =
+                new UpdateCreditNoteStatusCommand("REVERSED", null, "REFUND_ISSUED");
+        when(service.updateStatus(TENANT, POLICY_ID, CREDIT_NOTE_ID, command)).thenReturn(
+                new CreditNote(CREDIT_NOTE_ID, "CN-2026-0007", POLICY_ID,
+                        new BigDecimal("320.00"), "USD", "CANCELLATION", "REVERSED",
+                        Instant.parse("2026-10-21T10:00:00Z"),
+                        Instant.parse("2026-10-21T11:00:00Z"),
+                        Instant.parse("2026-10-20T18:00:00Z"), INSTALLMENT_ID,
+                        Instant.parse("2026-10-22T08:00:00Z"), "REFUND_ISSUED"));
+
+        mvc.perform(patch(NOTE_STATUS, POLICY_ID, CREDIT_NOTE_ID)
+                        .header("X-EIA-Tenant", TENANT.toString())
+                        .header("X-EIA-Book", "DIRECT")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"status": "REVERSED", "reason": "REFUND_ISSUED"}
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("REVERSED"))
+                .andExpect(jsonPath("$.appliedAt").value("2026-10-21T11:00:00Z"))
+                .andExpect(jsonPath("$.appliedInstallmentId")
+                        .value(INSTALLMENT_ID.toString()))
+                .andExpect(jsonPath("$.reversedAt").value("2026-10-22T08:00:00Z"))
+                .andExpect(jsonPath("$.reversalReason").value("REFUND_ISSUED"));
+
+        verify(service).updateStatus(TENANT, POLICY_ID, CREDIT_NOTE_ID, command);
+    }
+
+    @Test
     void acceptsTheDirectBookCaseInsensitivelyAndAnAbsentBook() throws Exception {
         when(service.list(TENANT, POLICY_ID)).thenReturn(List.of());
 
@@ -272,6 +302,23 @@ class PolicyCreditNoteControllerTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
                 .andExpect(jsonPath("$.errors[0].field").value("status"));
+
+        verifyNoInteractions(service);
+    }
+
+    @Test
+    void rejectsAReversalReasonLongerThanFiveHundredCharacters() throws Exception {
+        mvc.perform(patch(NOTE_STATUS, POLICY_ID, CREDIT_NOTE_ID)
+                        .header("X-EIA-Tenant", TENANT.toString())
+                        .header("X-EIA-Book", "DIRECT")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"status": "REVERSED", "reason": "%s"}
+                                """.formatted("x".repeat(501))))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.errors[*].field", hasItems("reason")));
 
         verifyNoInteractions(service);
     }

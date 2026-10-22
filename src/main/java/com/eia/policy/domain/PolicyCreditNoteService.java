@@ -8,9 +8,11 @@ import java.util.UUID;
 /**
  * Public domain facade for policy credit notes. The expert owns the note
  * numbering, the reason and status vocabularies, the approval and transition
- * rules, the APPLIED installment selection and amount-fit rules, and the SAP
- * credit-memo reference; the domain keeps the tenant and DIRECT book context on
- * every call and forwards the optional applied installment only for APPLIED.
+ * rules, the APPLIED installment selection and amount-fit rules, the REVERSED
+ * credit release, and the SAP credit-memo reference; the domain keeps the
+ * tenant and DIRECT book context on every call and forwards the optional
+ * applied installment only for APPLIED and the optional reason only for
+ * REVERSED.
  */
 @Service
 public class PolicyCreditNoteService {

@@ -9,16 +9,19 @@ import java.util.UUID;
 /**
  * One credit note requested against a direct policy (SPEC 11.2.13 billing and
  * receivables). The Policy expert owns the note number, the DRAFT/ISSUED/
- * APPLIED/CANCELLED lifecycle, the currency match, the approval gate, the SAP
- * credit-memo reference, and the status transitions; the domain publishes the
- * flat projection the billing screen renders.
+ * APPLIED/CANCELLED/REVERSED lifecycle, the currency match, the approval gate,
+ * the SAP credit-memo reference, and the status transitions; the domain
+ * publishes the flat projection the billing screen renders.
  *
  * <p>{@code issuedAt} is set when the note reaches {@code ISSUED} and
  * {@code appliedAt} when it is applied to the receivable; both are absent until
  * that transition happens. {@code appliedInstallmentId} identifies the open
  * installment the credit was posted against and is absent until the note is
- * {@code APPLIED}. {@code createdAt} is the request timestamp.
- * {@code reason} is optional and capped by the expert.</p>
+ * {@code APPLIED}. A {@code REVERSED} note keeps its application facts so the
+ * original credit stays auditable, and carries {@code reversedAt} plus the
+ * {@code reversalReason} written by the reversal. {@code createdAt} is
+ * the request timestamp. {@code reason} is optional and capped by the
+ * expert.</p>
  */
 public record CreditNote(
         UUID creditNoteId,
@@ -31,14 +34,24 @@ public record CreditNote(
         Instant issuedAt,
         Instant appliedAt,
         Instant createdAt,
-        UUID appliedInstallmentId
+        UUID appliedInstallmentId,
+        Instant reversedAt,
+        String reversalReason
 ) {
     /** Compatibility constructor for projections that predate credit application. */
     public CreditNote(UUID creditNoteId, String noteNumber, UUID policyId, BigDecimal amount,
                       String currency, String reason, String status, Instant issuedAt,
                       Instant appliedAt, Instant createdAt) {
         this(creditNoteId, noteNumber, policyId, amount, currency, reason, status, issuedAt,
-                appliedAt, createdAt, null);
+                appliedAt, createdAt, null, null, null);
+    }
+
+    /** Compatibility constructor for projections that predate credit-note reversal. */
+    public CreditNote(UUID creditNoteId, String noteNumber, UUID policyId, BigDecimal amount,
+                      String currency, String reason, String status, Instant issuedAt,
+                      Instant appliedAt, Instant createdAt, UUID appliedInstallmentId) {
+        this(creditNoteId, noteNumber, policyId, amount, currency, reason, status, issuedAt,
+                appliedAt, createdAt, appliedInstallmentId, null, null);
     }
 
     /**
@@ -49,6 +62,18 @@ public record CreditNote(
                       String currency, String reason, String status, Instant issuedAt,
                       Instant appliedAt, UUID appliedInstallmentId, Instant createdAt) {
         this(creditNoteId, noteNumber, policyId, amount, currency, reason, status, issuedAt,
-                appliedAt, createdAt, appliedInstallmentId);
+                appliedAt, createdAt, appliedInstallmentId, null, null);
+    }
+
+    /**
+     * Convenience constructor with the full expert order: the applied
+     * installment before the request timestamp, followed by the reversal facts.
+     */
+    public CreditNote(UUID creditNoteId, String noteNumber, UUID policyId, BigDecimal amount,
+                      String currency, String reason, String status, Instant issuedAt,
+                      Instant appliedAt, UUID appliedInstallmentId, Instant createdAt,
+                      Instant reversedAt, String reversalReason) {
+        this(creditNoteId, noteNumber, policyId, amount, currency, reason, status, issuedAt,
+                appliedAt, createdAt, appliedInstallmentId, reversedAt, reversalReason);
     }
 }

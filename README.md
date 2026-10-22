@@ -62,7 +62,10 @@ frequency, firstDueDate, status, installments[], summary}`. Each installment is
 `{installmentId, installmentNumber, dueDate, amount, creditedAmount,
 outstandingAmount, status, paidAt, paymentId}`: `amount` stays gross,
 `creditedAmount` is premium covered by applied credit notes, and
-`outstandingAmount` is the collectible remainder. The `summary` is
+`outstandingAmount` is the collectible remainder. Reversing an applied note
+releases its credit, so `creditedAmount`, `outstandingAmount`, the installment
+status, and the summary return to their pre-credit values without a shape
+change. The `summary` is
 `{totalAmount, paidAmount, waivedAmount, creditedAmount, outstandingAmount,
 overdueAmount, currency, installmentCount}`, with `outstandingAmount` net of
 paid, waived, and credited premium. `POST` creates the plan from
@@ -87,7 +90,9 @@ installmentNumber, dueDate, amount, creditedAmount, outstandingAmount,
 currency, status, daysPastDue, paidAt, paymentId, lastDunningLevel,
 lastDunningAt}`. `amount` stays the gross scheduled premium,
 `creditedAmount` is the premium covered by applied credit notes, and
-`outstandingAmount` is the collectible remainder. The response is the `{items,
+`outstandingAmount` is the collectible remainder. Reversing an applied note
+releases the credit and restores the collectible amount without changing the
+receivable shape. The response is the `{items,
 totalAmount, overdueAmount, count}` summary, where `totalAmount` and
 `overdueAmount` sum the outstanding amounts, oldest due date first, then policy
 number and installment number. The domain recomputes those totals from the
@@ -128,25 +133,34 @@ unchanged.
 `GET /api/v1/policies/{policyId}/credit-notes` returns the policy's credit
 notes newest first as an array of the flat projection `{creditNoteId,
 noteNumber, policyId, amount, currency, reason, status, issuedAt, appliedAt,
-appliedInstallmentId, createdAt}`; `amount` is a scale-preserving decimal
-string and `appliedInstallmentId` names the installment an APPLIED note was
-credited against. `POST` requests a note from `{amount, currency, reason?}` and
+appliedInstallmentId, createdAt, reversedAt, reversalReason}`; `amount` is a
+scale-preserving decimal string and `appliedInstallmentId` names the
+installment an APPLIED or REVERSED note was credited against. `POST` requests a
+note from `{amount, currency, reason?}` and
 returns `201` with the stored projection; the note starts in the expert-owned
 `DRAFT` state, `currency` must match the policy premium currency, and `reason`
 is optional and capped at 500 characters. `PATCH
-/credit-notes/{creditNoteId}/status` accepts `{status, installmentId?}` and
-returns the updated projection, with `issuedAt` set on `ISSUED`, and
-`appliedAt` plus `appliedInstallmentId` set on `APPLIED`. `installmentId` is
-required for `APPLIED` and is forwarded only for that transition; ISSUED and
-CANCELLED keep the unchanged `{status}` payload. The expert owns the note
-number, the `DRAFT`/`ISSUED`/`APPLIED`/`CANCELLED` lifecycle, the approval
-gate, the transition rules, the same-tenant/policy open-installment credit
-rule, and the SAP credit-memo reference. The domain validates the request
+/credit-notes/{creditNoteId}/status` accepts `{status, installmentId?,
+reason?}` and returns the updated projection, with `issuedAt` set on `ISSUED`,
+and `appliedAt` plus `appliedInstallmentId` set on `APPLIED`. `installmentId`
+is required for `APPLIED` and is forwarded only for that transition; ISSUED and
+CANCELLED keep the unchanged `{status}` payload. `REVERSED` is reachable from
+`APPLIED`, requires a non-blank `reason` capped at 500 characters, and returns
+`reversedAt` plus `reversalReason` while keeping the original application facts
+for audit. The reason is forwarded only for `REVERSED`, and the reversal
+releases the credit from the applied installment, so billing and receivables
+keep their existing shape and their credited/outstanding amounts return to
+their pre-credit values. The expert owns the note
+number, the `DRAFT`/`ISSUED`/`APPLIED`/`CANCELLED`/`REVERSED` lifecycle, the
+approval gate, the transition rules, the same-tenant/policy open-installment
+credit rule, the reversal credit release, and the SAP credit-memo reference.
+The domain validates the request
 shape, forwards `X-EIA-Tenant` and `X-EIA-Book: DIRECT` on every call, and
 rejects a supplied non-DIRECT book with `404 BOOK_SCOPE_VIOLATION`. Expert
 `400`, `404`, and `409` problems reach the caller unchanged; a missing policy
 is `404 POLICY_NOT_FOUND`, a missing note is `404 CREDIT_NOTE_NOT_FOUND`, a
-missing or foreign installment is `404 INSTALLMENT_NOT_FOUND`, and an
+missing or foreign installment is `404 INSTALLMENT_NOT_FOUND`, a missing
+reversal reason is `400 INVALID_CREDIT_NOTE_REASON`, and an
 out-of-order or terminal transition is `409
 INVALID_CREDIT_NOTE_TRANSITION`.
 

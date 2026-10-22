@@ -198,6 +198,33 @@ class PolicyReceivableClientTest {
     }
 
     @Test
+    void restoresTheCollectibleAmountWhenACreditNoteIsReversed() {
+        RestClient.Builder builder = builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        PolicyClient client = new PolicyClient(builder, new ObjectMapper(), BASE);
+
+        server.expect(requestTo(RECEIVABLES + "?tenantId=" + TENANT + "&limit=20"))
+                .andExpect(method(HttpMethod.GET))
+                .andExpect(header("X-EIA-Tenant", TENANT.toString()))
+                .andExpect(header("X-EIA-Book", "DIRECT"))
+                .andRespond(withStatus(HttpStatus.OK)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body(reversalSummaryJson()));
+
+        ReceivableSummary summary = client.findReceivables(TENANT, null, null, 20);
+
+        assertThat(summary.totalAmount()).isEqualByComparingTo("6000.0000");
+        assertThat(summary.overdueAmount()).isEqualByComparingTo("0");
+        assertThat(summary.count()).isEqualTo(1);
+        assertThat(summary.items()).singleElement().satisfies(receivable -> {
+            assertThat(receivable.status()).isEqualTo("DUE");
+            assertThat(receivable.creditedAmount()).isEqualByComparingTo("0.0000");
+            assertThat(receivable.outstandingAmount()).isEqualByComparingTo("6000.0000");
+        });
+        server.verify();
+    }
+
+    @Test
     void preservesAValidationProblemFromTheExpert() {
         RestClient.Builder builder = builder();
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
@@ -314,6 +341,25 @@ class PolicyReceivableClientTest {
                     converters.removeIf(MappingJackson2HttpMessageConverter.class::isInstance);
                     converters.add(0, new MappingJackson2HttpMessageConverter(mapper));
                 });
+    }
+
+    private static String reversalSummaryJson() {
+        return """
+                {
+                  "items": [
+                    {"installmentId": "%s", "planId": "%s", "planNumber": "BP-2026-0001",
+                     "policyId": "%s", "policyNumber": "POL-2026-0000001",
+                     "insuredPartyId": "%s", "installmentNumber": 2,
+                     "dueDate": "2026-07-15", "amount": "6000.0000",
+                     "creditedAmount": "0.0000", "outstandingAmount": "6000.0000",
+                     "currency": "USD", "status": "DUE", "daysPastDue": 0,
+                     "paidAt": null, "paymentId": null}
+                  ],
+                  "totalAmount": "6000.0000",
+                  "overdueAmount": "0.0000",
+                  "count": 1
+                }
+                """.formatted(SECOND_INSTALLMENT_ID, PLAN_ID, POLICY_ID, INSURED_PARTY_ID);
     }
 
     private static String summaryJson() {

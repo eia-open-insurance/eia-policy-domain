@@ -743,10 +743,10 @@ public class PolicyClient {
 
     // ------------------------------------------------------------------
     // Policy credit notes (SPEC 11.2.13 billing and receivables). The
-    // expert owns the note number, the DRAFT/ISSUED/APPLIED/CANCELLED
-    // lifecycle, the policy-currency match, the approval gate, and the
-    // SAP credit-memo reference; the domain forwards the tenant and
-    // DIRECT book context on every call.
+    // expert owns the note number, the DRAFT/ISSUED/APPLIED/CANCELLED/
+    // REVERSED lifecycle, the policy-currency match, the approval gate,
+    // the credit release on reversal, and the SAP credit-memo reference;
+    // the domain forwards the tenant and DIRECT book context on every call.
     // ------------------------------------------------------------------
 
     /** Lists the policy's credit notes, newest first. */
@@ -787,8 +787,9 @@ public class PolicyClient {
 
     /**
      * Advances one credit note through the expert-owned status lifecycle. The
-     * optional installment is forwarded only for an {@code APPLIED} transition;
-     * the other transitions keep the pre-application payload unchanged.
+     * optional installment is forwarded only for an {@code APPLIED} transition
+     * and the optional reason only for a {@code REVERSED} transition; every
+     * other status keeps the pre-application payload unchanged.
      */
     public CreditNote updateCreditNoteStatus(UUID tenantId, UUID policyId, UUID creditNoteId,
                                              UpdateCreditNoteStatusCommand command) {
@@ -800,7 +801,8 @@ public class PolicyClient {
                 .header(TENANT_HEADER, tenantId.toString())
                 .header(BookScope.BOOK_HEADER, BookScope.DIRECT)
                 .body(new ExpertCreditNoteStatusRequest(command.status(),
-                        isApplied(command.status()) ? command.installmentId() : null))
+                        isApplied(command.status()) ? command.installmentId() : null,
+                        isReversed(command.status()) ? command.reason() : null))
                 .retrieve()
                 .body(ExpertCreditNote.class));
         return toCreditNote(view);
@@ -808,6 +810,10 @@ public class PolicyClient {
 
     private static boolean isApplied(String status) {
         return status != null && "APPLIED".equalsIgnoreCase(status.trim());
+    }
+
+    private static boolean isReversed(String status) {
+        return status != null && "REVERSED".equalsIgnoreCase(status.trim());
     }
 
     private static CreditNote toCreditNote(ExpertCreditNote view) {
@@ -818,7 +824,7 @@ public class PolicyClient {
         return new CreditNote(view.creditNoteId(), view.noteNumber(), view.policyId(),
                 view.amount(), view.currency(), view.reason(), view.status(),
                 view.issuedAt(), view.appliedAt(), view.createdAt(),
-                view.appliedInstallmentId());
+                view.appliedInstallmentId(), view.reversedAt(), view.reversalReason());
     }
 
     /**
@@ -1271,18 +1277,21 @@ public class PolicyClient {
 
     /**
      * Wire shape of the credit-note status command. {@code installmentId} is
-     * included only for an {@code APPLIED} transition, so an older expert that
-     * does not know the member still receives the unchanged command for ISSUED
-     * and CANCELLED.
+     * included only for an {@code APPLIED} transition and {@code reason} only
+     * for a {@code REVERSED} transition, so an older expert that does not know
+     * the new member still receives the unchanged command for ISSUED and
+     * CANCELLED.
      */
     @JsonInclude(JsonInclude.Include.NON_NULL)
-    record ExpertCreditNoteStatusRequest(String status, UUID installmentId) {
+    record ExpertCreditNoteStatusRequest(String status, UUID installmentId, String reason) {
     }
 
     /**
      * Wire shape of one expert credit note. The public projection is flat; the
      * aliases accept the expert's {@code id} identity and the SPEC column names
-     * while the internal expert contract settles.
+     * while the internal expert contract settles. A reversed note keeps its
+     * application timestamps and installment and adds the reversal stamp and
+     * reason.
      */
     @JsonIgnoreProperties(ignoreUnknown = true)
     record ExpertCreditNote(
@@ -1296,7 +1305,9 @@ public class PolicyClient {
             @JsonAlias("issued_at") Instant issuedAt,
             @JsonAlias("applied_at") Instant appliedAt,
             @JsonAlias("created_at") Instant createdAt,
-            @JsonAlias({"applied_installment_id", "installmentId"}) UUID appliedInstallmentId
+            @JsonAlias({"applied_installment_id", "installmentId"}) UUID appliedInstallmentId,
+            @JsonAlias("reversed_at") Instant reversedAt,
+            @JsonAlias("reversal_reason") String reversalReason
     ) {
     }
 

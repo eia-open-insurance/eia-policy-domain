@@ -10,8 +10,8 @@ reinstatement, and renewal into a successor term. Billing adds the plan and
 installment schedule projection under the same tenant and DIRECT-book context.
 A cross-policy premium-receivable read projects installments as receivables for
 the collections/ageing view, the installment dunning route records and reads the
-collections actions, the credit-note route requests, lists, and advances the
-billing credits raised by cancellations, endorsements, and audits, the mass
+collections actions, the credit-note route requests, lists, advances, and reverses
+the billing credits raised by cancellations, endorsements, and audits, the mass
 tort profile route reads and replaces the allocation basis that Direct Claims
 uses, the legal entity catalog exposes the carriers and service companies
 that issue or support the DIRECT book, and the program catalog exposes the
@@ -42,7 +42,7 @@ utilization.
 | `CreateDunningActionCommand` | Dunning action body; shape validation only |
 | `CreditNote` | Public credit-note projection |
 | `CreateCreditNoteCommand` | Credit-note request body; shape validation only |
-| `UpdateCreditNoteStatusCommand` | Credit-note status body; optional APPLIED installment |
+| `UpdateCreditNoteStatusCommand` | Credit-note status body; optional APPLIED installment and REVERSED reason |
 | `MassTortProfile` | Public mass tort profile projection |
 | `UpdateMassTortProfileCommand` | Mass tort profile replace body; shape validation only |
 | `Receivable`, `ReceivableSummary` | Public receivable projection and its totals |
@@ -107,20 +107,30 @@ The domain forwards `GET` and `POST /internal/v1/policies/{policyId}/credit-note
 and `PATCH /internal/v1/policies/{policyId}/credit-notes/{creditNoteId}/status`
 with `X-EIA-Tenant`, `X-EIA-Book: DIRECT`, and the `tenantId` query scope.
 `POST` sends `{amount, currency, reason?}`; `PATCH` sends `{status,
-installmentId?}` and includes `installmentId` only when the target status is
-`APPLIED`, so ISSUED and CANCELLED keep the unchanged `{status}` payload. The
+installmentId?, reason?}` and includes `installmentId` only when the target
+status is `APPLIED` and `reason` only when it is `REVERSED`, so ISSUED and
+CANCELLED keep the unchanged `{status}` payload. The
 expert returns the flat note `{creditNoteId, noteNumber, policyId, amount,
 currency, reason, status, issuedAt, appliedAt, appliedInstallmentId,
-createdAt}`; the domain accepts the expert's `id` identity and SPEC column
+createdAt, reversedAt, reversalReason}`; the domain accepts the expert's `id`
+identity and SPEC column
 aliases (`note_number`, `policy_id`, `issued_at`, `applied_at`,
-`applied_installment_id`, `created_at`). `GET` returns the policy's notes
-newest first, or an empty array when none exists. The expert owns the note
-number, the `DRAFT`/`ISSUED`/`APPLIED`/`CANCELLED` lifecycle, the
-policy-currency match, the optional 500-character reason, the APPLIED
+`applied_installment_id`, `created_at`, `reversed_at`, `reversal_reason`). `GET`
+returns the policy's notes newest first, or an empty array when none exists.
+The expert owns the note
+number, the `DRAFT`/`ISSUED`/`APPLIED`/`CANCELLED`/`REVERSED` lifecycle, the
+policy-currency match, the optional 500-character creation reason, the APPLIED
 open-installment and amount-fit rules, the approval gate, and the SAP
-credit-memo reference, so an unknown currency is a preserved `400
-CURRENCY_MISMATCH`, a missing policy or note is `404 POLICY_NOT_FOUND` /
-`404 CREDIT_NOTE_NOT_FOUND`, a missing/foreign installment is
+credit-memo reference. `REVERSED` is reachable only from `APPLIED`, requires a
+non-blank `reason`, stamps `reversedAt` and `reversalReason`, keeps the
+application timestamps and installment for audit, and releases the note amount
+from the credited installment, reopening a fully CREDITED row as DUE/OVERDUE.
+The billing and receivable projections keep their shape; their
+`creditedAmount` and `outstandingAmount` values simply return to the
+pre-credit state after a reversal. An unknown currency is a preserved `400
+CURRENCY_MISMATCH`, a blank or over-long reversal reason is `400
+INVALID_CREDIT_NOTE_REASON`, a missing policy or note is `404 POLICY_NOT_FOUND`
+/ `404 CREDIT_NOTE_NOT_FOUND`, a missing/foreign installment is
 `404 INSTALLMENT_NOT_FOUND`, an ineligible installment is `409
 INSTALLMENT_NOT_CREDITABLE`, an amount above the uncredited remainder is `409
 CREDIT_NOTE_EXCEEDS_INSTALLMENT`, and an out-of-order or terminal transition is
@@ -228,12 +238,17 @@ read/record routes, shape validation, tenant/book handling, and problem
 propagation, and `DunningServiceTest` covers the delegation.
 `PolicyCreditNoteClientTest` uses `MockRestServiceServer` for the credit-note
 tenant/DIRECT headers, the request and status payloads including the APPLIED
-`{status, installmentId}` body (and its absence for ISSUED/CANCELLED), the
-identity/column aliases, the applied installment, the newest-first list, and
-preserved `400`/`404`/`409` problems; `PolicyCreditNoteControllerTest` covers
-the list/request/status routes including the APPLIED binding, shape
-validation, tenant/book handling, and problem propagation, and
-`PolicyCreditNoteServiceTest` covers the delegation.
+`{status, installmentId}` body, the REVERSED `{status, reason}` body (and the
+absence of the installment and of the reason for the transitions that ignore
+them), the identity/column aliases including `reversed_at`/`reversal_reason`,
+the applied installment, the reversal stamp and reason, the newest-first list,
+and preserved `400`/`404`/`409` problems; `PolicyCreditNoteControllerTest`
+covers the list/request/status routes including the APPLIED binding and the
+REVERSED reason, shape validation including the reason cap, tenant/book
+handling, and problem propagation, and `PolicyCreditNoteServiceTest` covers the
+delegation. `PolicyBillingClientTest` and `PolicyReceivableClientTest` also
+cover the post-reversal readings where the credited amount is released and
+the outstanding amount is restored without a projection shape change.
 `LegalEntityClientTest` uses `MockRestServiceServer` for the legal entity
 tenant/DIRECT headers, the create payload, the `id`/SPEC-column aliases, the
 issuer assignment, and preserved `400`/`404`/`409` problems;

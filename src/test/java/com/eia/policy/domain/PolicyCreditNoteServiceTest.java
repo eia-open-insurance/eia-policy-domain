@@ -68,6 +68,19 @@ class PolicyCreditNoteServiceTest {
         verify(client).updateCreditNoteStatus(TENANT, POLICY_ID, CREDIT_NOTE_ID, command);
     }
 
+    @Test
+    void delegatesTheReversalReasonToTheExpertClient() {
+        UpdateCreditNoteStatusCommand command =
+                new UpdateCreditNoteStatusCommand("REVERSED", null, "REFUND_ISSUED");
+        CreditNote note = note();
+        when(client.updateCreditNoteStatus(TENANT, POLICY_ID, CREDIT_NOTE_ID, command))
+                .thenReturn(note);
+
+        assertThat(service.updateStatus(TENANT, POLICY_ID, CREDIT_NOTE_ID, command))
+                .isSameAs(note);
+        verify(client).updateCreditNoteStatus(TENANT, POLICY_ID, CREDIT_NOTE_ID, command);
+    }
+
     private static CreditNote note() {
         return new CreditNote(CREDIT_NOTE_ID, "CN-2026-0007", POLICY_ID,
                 new BigDecimal("1250.50"), "USD", "CANCELLATION", "REQUESTED",

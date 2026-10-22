@@ -113,6 +113,16 @@ The format is based on Keep a Changelog and the project uses Semantic Versioning
   `appliedInstallmentId`. Receivables gain `creditedAmount` and
   `outstandingAmount`, and their totals use the outstanding amounts so credits
   reduce the collectible queue.
+- Credit-note reversal. The status command accepts an optional `reason` and
+  forwards it only for `REVERSED`, while `installmentId` stays `APPLIED`-only.
+  The credit-note projection gains `reversedAt` and `reversalReason`, and a
+  reversed note keeps `issuedAt`, `appliedAt`, and `appliedInstallmentId` so
+  the original application stays auditable. `REVERSED` is reachable from
+  `APPLIED`, requires a non-blank reason capped at 500 characters, and releases
+  the credit from the applied installment. Billing and receivables keep their
+  existing shape while `creditedAmount`, `outstandingAmount`, the installment
+  status, and the summary totals return to their pre-credit values; expert
+  `400`/`404`/`409` problems are preserved.
 
 ### Changed
 

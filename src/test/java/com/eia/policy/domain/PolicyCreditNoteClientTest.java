@@ -189,6 +189,34 @@ class PolicyCreditNoteClientTest {
     }
 
     @Test
+    void reversesTheCreditNoteAndForwardsOnlyTheReason() {
+        RestClient.Builder builder = builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        PolicyClient client = new PolicyClient(builder, new ObjectMapper(), BASE);
+
+        server.expect(requestTo(NOTE_STATUS + "?tenantId=" + TENANT))
+                .andExpect(method(HttpMethod.PATCH))
+                .andExpect(header("X-EIA-Tenant", TENANT.toString()))
+                .andExpect(header("X-EIA-Book", "DIRECT"))
+                .andExpect(content().string("""
+                        {"status":"REVERSED","reason":"REFUND_ISSUED"}
+                        """.strip()))
+                .andRespond(withStatus(HttpStatus.OK)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body(reversedCreditNoteJson()));
+
+        CreditNote note = client.updateCreditNoteStatus(TENANT, POLICY_ID, CREDIT_NOTE_ID,
+                new UpdateCreditNoteStatusCommand("REVERSED", INSTALLMENT_ID, "REFUND_ISSUED"));
+
+        assertThat(note.status()).isEqualTo("REVERSED");
+        assertThat(note.reversedAt()).isEqualTo(Instant.parse("2026-10-22T08:00:00Z"));
+        assertThat(note.reversalReason()).isEqualTo("REFUND_ISSUED");
+        assertThat(note.appliedAt()).isEqualTo(Instant.parse("2026-10-21T11:00:00Z"));
+        assertThat(note.appliedInstallmentId()).isEqualTo(INSTALLMENT_ID);
+        server.verify();
+    }
+
+    @Test
     void doesNotForwardAnInstallmentForANonAppliedTransition() {
         RestClient.Builder builder = builder();
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
@@ -216,7 +244,7 @@ class PolicyCreditNoteClientTest {
                                 """.formatted(CREDIT_NOTE_ID, POLICY_ID)));
 
         CreditNote note = client.updateCreditNoteStatus(TENANT, POLICY_ID, CREDIT_NOTE_ID,
-                new UpdateCreditNoteStatusCommand("CANCELLED", INSTALLMENT_ID));
+                new UpdateCreditNoteStatusCommand("CANCELLED", INSTALLMENT_ID, "NOT_A_REASON"));
 
         assertThat(note.status()).isEqualTo("CANCELLED");
         assertThat(note.appliedInstallmentId()).isNull();
@@ -249,6 +277,38 @@ class PolicyCreditNoteClientTest {
             assertThat(note.policyId()).isEqualTo(POLICY_ID);
             assertThat(note.amount()).isEqualByComparingTo("75.0000");
             assertThat(note.createdAt()).isEqualTo(Instant.parse("2026-10-20T18:00:00Z"));
+        });
+        server.verify();
+    }
+
+    @Test
+    void acceptsTheReversalSpecColumnAliases() {
+        RestClient.Builder builder = builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        PolicyClient client = new PolicyClient(builder, new ObjectMapper(), BASE);
+
+        server.expect(requestTo(NOTES + "?tenantId=" + TENANT))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withStatus(HttpStatus.OK)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body("""
+                                [{"credit_note_id": "%s", "note_number": "CN-2026-0009",
+                                  "policy_id": "%s", "amount": "75.0000", "currency": "EUR",
+                                  "reason": "OVERPAYMENT", "status": "REVERSED",
+                                  "issued_at": "2026-10-21T10:00:00Z",
+                                  "applied_at": "2026-10-21T11:00:00Z",
+                                  "applied_installment_id": "%s",
+                                  "created_at": "2026-10-20T18:00:00Z",
+                                  "reversed_at": "2026-10-22T08:00:00Z",
+                                  "reversal_reason": "DUPLICATE_CHARGE"}]
+                                """.formatted(CREDIT_NOTE_ID, POLICY_ID, INSTALLMENT_ID)));
+
+        List<CreditNote> notes = client.findCreditNotes(TENANT, POLICY_ID);
+
+        assertThat(notes).singleElement().satisfies(note -> {
+            assertThat(note.status()).isEqualTo("REVERSED");
+            assertThat(note.reversedAt()).isEqualTo(Instant.parse("2026-10-22T08:00:00Z"));
+            assertThat(note.reversalReason()).isEqualTo("DUPLICATE_CHARGE");
         });
         server.verify();
     }
@@ -466,7 +526,30 @@ class PolicyCreditNoteClientTest {
                   "issuedAt": "2026-10-21T10:00:00Z",
                   "appliedAt": "2026-10-21T11:00:00Z",
                   "appliedInstallmentId": "%s",
-                  "createdAt": "2026-10-20T18:00:00Z"
+                  "createdAt": "2026-10-20T18:00:00Z",
+                  "reversedAt": null,
+                  "reversalReason": null
+                }
+                """.formatted(CREDIT_NOTE_ID, TENANT, POLICY_ID, INSTALLMENT_ID);
+    }
+
+    private static String reversedCreditNoteJson() {
+        return """
+                {
+                  "id": "%s",
+                  "tenantId": "%s",
+                  "noteNumber": "CN-2026-0007",
+                  "policyId": "%s",
+                  "amount": "1250.5000",
+                  "currency": "USD",
+                  "reason": "CANCELLATION",
+                  "status": "REVERSED",
+                  "issuedAt": "2026-10-21T10:00:00Z",
+                  "appliedAt": "2026-10-21T11:00:00Z",
+                  "appliedInstallmentId": "%s",
+                  "createdAt": "2026-10-20T18:00:00Z",
+                  "reversedAt": "2026-10-22T08:00:00Z",
+                  "reversalReason": "REFUND_ISSUED"
                 }
                 """.formatted(CREDIT_NOTE_ID, TENANT, POLICY_ID, INSTALLMENT_ID);
     }
