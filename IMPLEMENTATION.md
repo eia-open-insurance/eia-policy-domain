@@ -12,6 +12,9 @@ and appends a positive premium adjustment installment when the policy premium
 overtakes the ACTIVE plan total.
 The premium-audit route applies an audited premium and returns the updated
 policy plus the audit row.
+The underwriting-submission slice proxies intake, status transitions, and
+conversion of one submission into a policy, returning the converted submission
+and the created policy.
 A cross-policy premium-receivable read projects installments as receivables for
 the collections/ageing view, the installment dunning route records and reads the
 collections actions, the credit-note route requests, lists, advances, and reverses
@@ -37,10 +40,12 @@ utilization.
 | `LegalEntityController` / `LegalEntityService` | Legal entity `POST`/`GET` catalog routes; DIRECT-book guard |
 | `PolicyLegalEntityController` / `PolicyLegalEntityService` | Policy issuer `PATCH` route; DIRECT-book guard |
 | `ProgramController` / `ProgramService` | Program `POST`/`GET` catalog routes; date and capacity-pair validation; DIRECT-book guard |
-| `SubmissionController` / `SubmissionService` | Underwriting submission list/read/create/status routes; DIRECT-book guard and idempotency normalization |
-| `SubmissionDto` | Public underwriting submission projection with the canonical applicant, product, requested-limit, tort-code, notes, and timestamp members |
+| `SubmissionController` / `SubmissionService` | Underwriting submission list/read/create/status/convert routes; DIRECT-book guard and idempotency normalization |
+| `SubmissionDto` | Public underwriting submission projection with the canonical applicant, product, requested-limit, tort-code, notes, and timestamp members plus the optional converted-policy link |
 | `CreateSubmissionCommand` | Submission create body; applicant/product/requested-term/limit requirements and optional tort codes and notes |
 | `UpdateSubmissionStatusCommand` | Submission status body; shape validation only |
+| `ConvertSubmissionCommand` | Submission conversion body; required premium and currency plus the optional expiration override |
+| `SubmissionConversionResult` | Public `{submission, policy}` conversion envelope |
 | `ProgramDto` | Public program projection with the optional capacity limit and expert-derived aggregates |
 | `CreateProgramCommand` | Program create body; shape validation and the optional capacity pair |
 | `BillingPlan`, `BillingSummary`, `Installment` | Public billing projections and their credited/outstanding totals |
@@ -282,16 +287,18 @@ only when it is supplied.
 The canonical public projection is `{submissionId, submissionNumber, tenantId,
 applicantPartyId, productCode, requestedEffectiveDate, requestedLimitAmount,
 requestedLimitCurrency, tortCodes[], notes, status, version, createdAt,
-updatedAt}`. The expert row carries the remaining members; the domain fills
-`tenantId` from the scoped request because the current expert deliberately does
-not leak the tenant column. The domain accepts a bare row or a
+updatedAt, policyId?}`. The expert row carries the remaining members; the domain
+fills `tenantId` from the scoped request because the current expert deliberately
+does not leak the tenant column, and publishes the optional `policyId` only when
+the expert exposes the converted-policy link. The domain accepts a bare row or a
 `{submission, ...}` envelope on every single-submission read and mutation, and
 `GET` on the collection accepts either a bare array or an `{items, ...}` page
 envelope; the public list is always a bare array. The domain also accepts the
 expert's `id` identity and the SPEC column aliases (`submission_id`,
 `submission_number`, `tenant_id`, `applicant_party_id`, `product_code`,
 `requested_effective_date`, `requested_limit_amount`,
-`requested_limit_currency`, `tort_codes`, `created_at`, `updated_at`).
+`requested_limit_currency`, `tort_codes`, `policy_id`, `created_at`,
+`updated_at`).
 
 The optional `Idempotency-Key` is forwarded on create and status; an expert
 replay is `200` with `Idempotent-Replayed: true`. The optional `If-Match` is
@@ -301,6 +308,30 @@ expert owns the submission number, the applicant and product rules, the
 quote/bind workflow, so its `400`/`404`/`409` problems are preserved. The
 expert side of this contract lives in `eia-policy-expert`; this repository
 contains the domain adapter only.
+
+## Submission conversion expert contract
+
+`POST /api/v1/policies/submissions/{submissionId}/convert` converts one
+submission into a policy. The body is `{premiumAmount, premiumCurrency,
+expirationDate?}`; premium and currency are required, and the expiration
+override is forwarded only when supplied. The domain calls
+`POST /internal/v1/policies/submissions/{submissionId}/convert` with
+`X-EIA-Tenant`, `X-EIA-Book: DIRECT`, the `tenantId` query scope, and the
+normalized optional `Idempotency-Key`.
+
+The expert owns the conversion eligibility, the submission-to-policy linkage,
+and both projections. The public response is the expert `{submission, policy}`
+envelope: `submission` is the canonical projection above (carrying `policyId`
+when the expert exposes the converted-policy link, and omitting the member when
+it does not) and `policy` is the same `PolicyDto` published by the policy
+routes. An expert that returns only the created policy is also accepted: the
+domain reads the converted submission back with the same tenant scope and
+composes the public envelope. A fresh conversion is `201`; an expert replay is
+`200` with `Idempotent-Replayed: true`. The expert's `400`/`404`/`409` problems
+are preserved unchanged, covering a non-convertible submission status, an
+unknown or cross-tenant submission, an already-converted submission, and an
+idempotency-key conflict. The expert side of this contract lives in
+`eia-policy-expert`; this repository contains the domain adapter only.
 
 ## Verification
 
@@ -378,10 +409,16 @@ the bare-array and `{items}` list shapes, the bare and `{submission}` single-row
 shapes, the canonical create payload with and without an idempotency key, the
 status payload with and without a reason, `If-Match` forwarding, the ETag and
 replay mapping, the SPEC-column aliases, and preserved `400`/`404`/`409`
-problems; `SubmissionControllerTest` covers the list/read/create/status routes,
-the canonical projection, ETag derivation and echo, `201`/`200` selection, the
-expert create caps, tenant/book handling, and problem propagation, and
-`SubmissionServiceTest` covers delegation and idempotency normalization.
+problems; `SubmissionConversionClientTest` uses `MockRestServiceServer` for the
+conversion tenant/DIRECT/idempotency headers, the canonical terms payload with
+and without the optional expiration date, the `{submission, policy}` envelope,
+the bare-policy expert shape with its follow-up submission read, the converted
+`policyId` mapping (and its absence on an older expert), and preserved
+`400`/`404`/`409` problems; `SubmissionControllerTest` covers the
+list/read/create/status/convert routes, the canonical projection, ETag
+derivation and echo, `201`/`200` selection, the expert create caps, tenant/book
+handling, and problem propagation, and `SubmissionServiceTest` covers delegation
+and idempotency normalization.
 `PolicyPremiumAuditClientTest` uses `MockRestServiceServer` for the
 premium-audit tenant/DIRECT headers, the request payload with and without the
 optional approval members, the bare policy response (the current expert shape),
@@ -408,6 +445,6 @@ normalization, and `If-Match`/key rejection before the expert call.
 - The domain does not proxy occurrences, claims, reinsurance, billing accounts,
   billing instructions, disputes, commission statements, producer payables, or
   lineage projections (SPEC 11.2.10/11.2.13) yet. Underwriting submissions are
-  proxied as intake plus status transitions; clearance, referral, rating
-  worksheets, quote/bind conversion, producer licensing, and authority
-  evaluation are not modelled or orchestrated here.
+  proxied as intake, status transitions, and conversion to a policy; clearance,
+  referral, rating worksheets, producer licensing, and authority evaluation are
+  not modelled or orchestrated here.

@@ -69,6 +69,17 @@ The format is based on Keep a Changelog and the project uses Semantic Versioning
   preserved. Single-submission responses accept a bare row or a
   `{submission, ...}` envelope, and the collection accepts a bare array or an
   `{items, ...}` page.
+- `POST /api/v1/policies/submissions/{submissionId}/convert` converts one
+  underwriting submission into a policy from `{premiumAmount, premiumCurrency,
+  expirationDate?}` and returns the `{submission, policy}` envelope. A fresh
+  conversion is `201`; an expert replay is `200` with
+  `Idempotent-Replayed: true`. The tenant query, `X-EIA-Tenant`,
+  `X-EIA-Book: DIRECT`, and the optional `Idempotency-Key` are forwarded; the
+  expert `ETag` is echoed (falling back to the created policy's version), the
+  converted submission projects `policyId` when the expert exposes the link,
+  and expert `400`/`404`/`409` problems are preserved. An expert that returns
+  only the created policy is also accepted; the domain reads the converted
+  submission back and composes the same envelope.
 - `POST /api/v1/policies/{policyId}/renew` renews a policy into a successor
   term from `{effectiveDate, expirationDate, premiumAmount?, premiumCurrency?,
   limitAmount?, limitCurrency?}`. The successor `PolicyDto` exposes

@@ -63,6 +63,7 @@ Underwriting submissions are a top-level DIRECT-book collection:
 | `GET`/`POST` | `/api/v1/policies/submissions` | Submission list / create |
 | `GET` | `/api/v1/policies/submissions/{submissionId}` | One submission |
 | `PATCH` | `/api/v1/policies/submissions/{submissionId}/status` | Advance the status |
+| `POST` | `/api/v1/policies/submissions/{submissionId}/convert` | Convert the submission to a policy |
 
 ### Billing plan
 
@@ -158,13 +159,14 @@ BOOK_SCOPE_VIOLATION`.
 `GET /api/v1/policies/submissions` returns the tenant's submissions as an array
 of `{submissionId, submissionNumber, tenantId, applicantPartyId, productCode,
 requestedEffectiveDate, requestedLimitAmount, requestedLimitCurrency, tortCodes[],
-notes, status, version, createdAt, updatedAt}`. `version` drives the strong
-`ETag`, and `tenantId` is filled from the scoped request because the expert row
-does not expose the tenant column. `POST` creates a submission from
-`{applicantPartyId, productCode, requestedEffectiveDate, requestedLimitAmount,
-requestedLimitCurrency, tortCodes[], notes?}` and returns `201` with the stored
-projection. `GET /api/v1/policies/submissions/{submissionId}` reads one
-submission, and `PATCH /api/v1/policies/submissions/{submissionId}/status`
+notes, status, version, createdAt, updatedAt, policyId?}`. `version` drives the
+strong `ETag`, and `tenantId` is filled from the scoped request because the
+expert row does not expose the tenant column. The optional `policyId` appears
+when the expert exposes the converted-policy link. `POST` creates a submission
+from `{applicantPartyId, productCode, requestedEffectiveDate,
+requestedLimitAmount, requestedLimitCurrency, tortCodes[], notes?}` and returns
+`201` with the stored projection. `GET /api/v1/policies/submissions/{submissionId}`
+reads one submission, and `PATCH /api/v1/policies/submissions/{submissionId}/status`
 advances it from `{status, reason?}`. The expert owns the
 `RECEIVED`/`REFERRED`/`QUOTED`/`BOUND`/`DECLINED`/`WITHDRAWN` lifecycle, the
 applicant and product rules, and the quote/bind workflow. The domain forwards
@@ -176,6 +178,19 @@ unchanged. The expert may return the bare projection or a `{submission, ...}`
 envelope, and the collection may be a bare array or an `{items, ...}` page; the
 domain always publishes the flat projection and a bare array. An absent book is
 accepted; a supplied non-DIRECT book is `404 BOOK_SCOPE_VIOLATION`.
+
+`POST /api/v1/policies/submissions/{submissionId}/convert` converts one
+submission into a policy from `{premiumAmount, premiumCurrency,
+expirationDate?}` and returns the `{submission, policy}` envelope. A fresh
+conversion is `201`; an expert replay is `200` with
+`Idempotent-Replayed: true`. The domain forwards the tenant query,
+`X-EIA-Tenant`, `X-EIA-Book: DIRECT`, and the optional `Idempotency-Key`; the
+expert owns the conversion eligibility and the submission-to-policy linkage, so
+its `400`, `404`, and `409` problems (including an already-converted submission)
+reach the caller unchanged. When the expert returns only the created policy,
+the domain reads the converted submission back and still publishes the
+envelope. The converted-policy link appears as `submission.policyId` when the
+expert exposes it, and the created `policy` is the usual `PolicyDto`.
 
 ### Premium receivables
 
@@ -426,7 +441,8 @@ The service listens on port 8084. Every request requires `X-EIA-Tenant`.
 - `GET /api/v1/policies/{id}/rating`
 - `GET`/`POST /api/v1/policies/submissions`,
   `GET /api/v1/policies/submissions/{submissionId}`,
-  `PATCH /api/v1/policies/submissions/{submissionId}/status`
+  `PATCH /api/v1/policies/submissions/{submissionId}/status`,
+  `POST /api/v1/policies/submissions/{submissionId}/convert`
 - `PATCH /api/v1/policies/{id}/billing/installments/{installmentId}`
 - `GET /api/v1/billing/installments?status=&dueBefore=&limit=`
 - `GET`/`POST /api/v1/billing/installments/{installmentId}/dunning`

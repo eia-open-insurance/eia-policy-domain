@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.hasItems;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -40,6 +41,8 @@ class SubmissionControllerTest {
     private static final String BASE = "/api/v1/policies/submissions";
     private static final String DETAIL = BASE + "/{submissionId}";
     private static final String STATUS = BASE + "/{submissionId}/status";
+    private static final String CONVERT = BASE + "/{submissionId}/convert";
+    private static final UUID POLICY_ID = UUID.fromString("33333333-3333-7333-8333-333333333333");
 
     private static final CreateSubmissionCommand COMMAND = new CreateSubmissionCommand(
             APPLICANT_ID, "CGL_PRODUCTS", LocalDate.of(2026, 1, 1),
@@ -47,6 +50,9 @@ class SubmissionControllerTest {
             "broker intake");
     private static final UpdateSubmissionStatusCommand STATUS_COMMAND =
             new UpdateSubmissionStatusCommand("QUOTED", "ready to quote");
+    private static final ConvertSubmissionCommand CONVERT_COMMAND =
+            new ConvertSubmissionCommand(new BigDecimal("12500.0000"), "USD",
+                    LocalDate.of(2027, 1, 1));
     private static final String CREATE_BODY = """
             {
               "applicantPartyId": "%s",
@@ -60,6 +66,13 @@ class SubmissionControllerTest {
             """.formatted(APPLICANT_ID);
     private static final String STATUS_BODY = """
             {"status": "QUOTED", "reason": "ready to quote"}
+            """;
+    private static final String CONVERT_BODY = """
+            {
+              "premiumAmount": 12500.0000,
+              "premiumCurrency": "USD",
+              "expirationDate": "2027-01-01"
+            }
             """;
 
     @Autowired
@@ -358,6 +371,158 @@ class SubmissionControllerTest {
                 .andExpect(jsonPath("$.code").value("INVALID_SUBMISSION_TRANSITION"))
                 .andExpect(jsonPath("$.category").value("CONFLICT"))
                 .andExpect(jsonPath("$.meta.sourceStatus").value("RECEIVED"));
+    }
+
+    @Test
+    void omitsTheConvertedPolicyLinkWhenTheExpertDoesNotExposeIt() throws Exception {
+        when(service.get(TENANT, SUBMISSION_ID)).thenReturn(submission(2));
+
+        String body = mvc.perform(get(DETAIL, SUBMISSION_ID)
+                        .header("X-EIA-Tenant", TENANT.toString())
+                        .header("X-EIA-Book", DIRECT))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+
+        assertThat(body).doesNotContain("policyId");
+    }
+
+    @Test
+    void convertsTheSubmissionAndReturnsTheCreatedPolicy() throws Exception {
+        when(service.convert(TENANT, SUBMISSION_ID, CONVERT_COMMAND, "convert-key"))
+                .thenReturn(new Mutation<>(conversion(), "\"0\"", false));
+
+        mvc.perform(post(CONVERT, SUBMISSION_ID)
+                        .header("X-EIA-Tenant", TENANT.toString())
+                        .header("X-EIA-Book", DIRECT)
+                        .header("Idempotency-Key", "convert-key")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(CONVERT_BODY))
+                .andExpect(status().isCreated())
+                .andExpect(header().string("ETag", "\"0\""))
+                .andExpect(header().string("Idempotent-Replayed", "false"))
+                .andExpect(jsonPath("$.submission.submissionId")
+                        .value(SUBMISSION_ID.toString()))
+                .andExpect(jsonPath("$.submission.status").value("BOUND"))
+                .andExpect(jsonPath("$.submission.policyId").value(POLICY_ID.toString()))
+                .andExpect(jsonPath("$.policy.id").value(POLICY_ID.toString()))
+                .andExpect(jsonPath("$.policy.policyNumber").value("POL-2026-0000001"))
+                .andExpect(jsonPath("$.policy.premiumAmount").value("12500.0000"))
+                .andExpect(jsonPath("$.policy.premiumCurrency").value("USD"));
+
+        verify(service).convert(TENANT, SUBMISSION_ID, CONVERT_COMMAND, "convert-key");
+    }
+
+    @Test
+    void returnsOkAndTheReplayMarkerForAnIdempotentConversionReplay() throws Exception {
+        when(service.convert(TENANT, SUBMISSION_ID, CONVERT_COMMAND, "convert-key"))
+                .thenReturn(new Mutation<>(conversion(), "\"0\"", true));
+
+        mvc.perform(post(CONVERT, SUBMISSION_ID)
+                        .header("X-EIA-Tenant", TENANT.toString())
+                        .header("X-EIA-Book", DIRECT)
+                        .header("Idempotency-Key", "convert-key")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(CONVERT_BODY))
+                .andExpect(status().isOk())
+                .andExpect(header().string("ETag", "\"0\""))
+                .andExpect(header().string("Idempotent-Replayed", "true"))
+                .andExpect(jsonPath("$.policy.id").value(POLICY_ID.toString()));
+    }
+
+    @Test
+    void derivesTheConversionEtagFromTheCreatedPolicyWhenTheExpertOmitsIt() throws Exception {
+        when(service.convert(TENANT, SUBMISSION_ID, CONVERT_COMMAND, null))
+                .thenReturn(new Mutation<>(conversion(), null, false));
+
+        mvc.perform(post(CONVERT, SUBMISSION_ID)
+                        .header("X-EIA-Tenant", TENANT.toString())
+                        .header("X-EIA-Book", DIRECT)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(CONVERT_BODY))
+                .andExpect(status().isCreated())
+                .andExpect(header().string("ETag", "\"0\""));
+    }
+
+    @Test
+    void validatesTheConvertBody() throws Exception {
+        mvc.perform(post(CONVERT, SUBMISSION_ID)
+                        .header("X-EIA-Tenant", TENANT.toString())
+                        .header("X-EIA-Book", DIRECT)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.errors[*].field",
+                        hasItems("premiumAmount", "premiumCurrency")));
+
+        verifyNoInteractions(service);
+    }
+
+    @Test
+    void rejectsAnyOtherBookOnConversionBeforeCallingTheExpert() throws Exception {
+        mvc.perform(post(CONVERT, SUBMISSION_ID)
+                        .header("X-EIA-Tenant", TENANT.toString())
+                        .header("X-EIA-Book", "ASSUMED")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(CONVERT_BODY))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("BOOK_SCOPE_VIOLATION"));
+
+        verifyNoInteractions(service);
+    }
+
+    @Test
+    void requiresTheTenantHeaderOnConversion() throws Exception {
+        mvc.perform(post(CONVERT, SUBMISSION_ID)
+                        .header("X-EIA-Book", DIRECT)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(CONVERT_BODY))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("MISSING_TENANT_HEADER"));
+
+        verifyNoInteractions(service);
+    }
+
+    @Test
+    void preservesTheExpertConversionConflictProblem() throws Exception {
+        when(service.convert(eq(TENANT), eq(SUBMISSION_ID),
+                any(ConvertSubmissionCommand.class), eq("convert-key")))
+                .thenThrow(new ApiException(HttpStatus.CONFLICT,
+                        "SUBMISSION_ALREADY_CONVERTED",
+                        "Submission already converted to policy " + POLICY_ID,
+                        List.of(new ApiException.FieldIssue("submissionId",
+                                "SUBMISSION_ALREADY_CONVERTED",
+                                "submission is already bound to a policy")),
+                        Map.of("policyId", POLICY_ID.toString())));
+
+        mvc.perform(post(CONVERT, SUBMISSION_ID)
+                        .header("X-EIA-Tenant", TENANT.toString())
+                        .header("X-EIA-Book", DIRECT)
+                        .header("Idempotency-Key", "convert-key")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(CONVERT_BODY))
+                .andExpect(status().isConflict())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.code").value("SUBMISSION_ALREADY_CONVERTED"))
+                .andExpect(jsonPath("$.category").value("CONFLICT"))
+                .andExpect(jsonPath("$.meta.policyId").value(POLICY_ID.toString()));
+    }
+
+    private static SubmissionConversionResult conversion() {
+        return new SubmissionConversionResult(
+                new SubmissionDto(SUBMISSION_ID, "SUB-2026-0000001", TENANT, APPLICANT_ID,
+                        "CGL_PRODUCTS", LocalDate.of(2026, 1, 1),
+                        new BigDecimal("1000000.0000"), "USD",
+                        List.of("ASBESTOS", "PFAS"), "broker intake", "BOUND", 3,
+                        Instant.parse("2026-10-22T09:00:00Z"),
+                        Instant.parse("2026-10-22T10:00:00Z"), POLICY_ID),
+                new PolicyDto(POLICY_ID, TENANT, "POL-2026-0000001", "CGL_PRODUCTS",
+                        APPLICANT_ID, "ISSUED", LocalDate.of(2026, 1, 1),
+                        LocalDate.of(2027, 1, 1), new BigDecimal("12500.0000"), "USD",
+                        new BigDecimal("1000000.0000"), "USD", 0,
+                        Instant.parse("2026-10-22T11:00:00Z"),
+                        Instant.parse("2026-10-22T11:00:00Z"), null, null, null));
     }
 
     private static SubmissionDto submission(Integer version) {

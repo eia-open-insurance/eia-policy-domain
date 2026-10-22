@@ -28,7 +28,10 @@ import java.util.UUID;
  * creates one submission and returns {@code 201} (or {@code 200} for an expert
  * idempotent replay) with the stored projection. {@code PATCH .../{submissionId}/status}
  * advances the submission through the expert-owned lifecycle and returns the
- * updated projection.</p>
+ * updated projection. {@code POST .../{submissionId}/convert} turns one
+ * submission into a policy and returns the
+ * {@code {submission, policy}} envelope, {@code 201} for a fresh conversion
+ * (or {@code 200} for an expert idempotent replay).</p>
  */
 @RestController
 @RequestMapping("/api/v1/policies/submissions")
@@ -110,6 +113,33 @@ public class SubmissionController {
     }
 
     /**
+     * Converts one submission into a policy. The premium and currency are
+     * required, the expiration date is optional, and the expert owns whether
+     * the submission is convertible. The tenant, DIRECT book, and optional
+     * {@code Idempotency-Key} are forwarded; expert {@code 400}/{@code 404}/
+     * {@code 409} problems are preserved unchanged.
+     */
+    @PostMapping("/{submissionId}/convert")
+    public ResponseEntity<SubmissionConversionResult> convert(
+            @RequestHeader(TENANT_HEADER) UUID tenantId,
+            @RequestHeader(value = BookScope.BOOK_HEADER, required = false) String book,
+            @PathVariable UUID submissionId,
+            @RequestHeader(value = IDEMPOTENCY_KEY, required = false) String idempotencyKey,
+            @Valid @RequestBody ConvertSubmissionCommand command) {
+        BookScope.requireDirectWhenPresent(book);
+        Mutation<SubmissionConversionResult> result = service.convert(tenantId, submissionId,
+                command, idempotencyKey);
+        ResponseEntity.BodyBuilder response = ResponseEntity
+                .status(result.replayed() ? HttpStatus.OK : HttpStatus.CREATED)
+                .header(IDEMPOTENT_REPLAYED, Boolean.toString(result.replayed()));
+        String etag = conversionEtag(result);
+        if (etag != null) {
+            response = response.eTag(etag);
+        }
+        return response.body(result.body());
+    }
+
+    /**
      * The strong tag echoes the expert first. When an older expert returns no
      * {@code ETag}, the aggregate {@code version} is the same representation
      * marker used by the rest of the policy API.
@@ -124,5 +154,21 @@ public class SubmissionController {
     private static String etag(SubmissionDto submission) {
         return submission == null || submission.version() == null
                 ? null : EntityTags.format(submission.version());
+    }
+
+    /**
+     * The conversion envelope is not itself versioned. The strong tag echoes
+     * the expert first; when an older expert returns no {@code ETag}, the
+     * created policy's version is the representation marker clients refresh.
+     */
+    private static String conversionEtag(Mutation<SubmissionConversionResult> result) {
+        if (result.etag() != null && !result.etag().isBlank()) {
+            return result.etag();
+        }
+        if (result.body() == null || result.body().policy() == null
+                || result.body().policy().id() == null) {
+            return null;
+        }
+        return EntityTags.format(result.body().policy().version());
     }
 }

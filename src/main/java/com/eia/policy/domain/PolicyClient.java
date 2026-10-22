@@ -866,6 +866,37 @@ public class PolicyClient {
     }
 
     /**
+     * Converts one submission into a policy. The expert owns the conversion
+     * eligibility and the submission-to-policy linkage; the domain forwards the
+     * tenant, DIRECT book, and the optional idempotency key, then publishes the
+     * public {@code {submission, policy}} view. A fresh conversion is
+     * {@code 201}; an expert replay is {@code 200} with the replay marker.
+     */
+    public Mutation<SubmissionConversionResult> convertSubmission(
+            UUID tenantId, UUID submissionId, ConvertSubmissionCommand command,
+            String idempotencyKey) {
+        ResponseEntity<JsonNode> response = callEntity(
+                "convert underwriting submission", () -> {
+                    RestClient.RequestBodySpec spec = client.post()
+                            .uri(uri -> uri.path(
+                                            "/internal/v1/policies/submissions/{submissionId}/convert")
+                                    .queryParam("tenantId", tenantId)
+                                    .build(submissionId))
+                            .header(TENANT_HEADER, tenantId.toString())
+                            .header(BookScope.BOOK_HEADER, BookScope.DIRECT);
+                    if (idempotencyKey != null && !idempotencyKey.isBlank()) {
+                        spec = spec.header("Idempotency-Key", idempotencyKey);
+                    }
+                    return spec.body(new ExpertSubmissionConversionRequest(
+                                    command.premiumAmount(), command.premiumCurrency(),
+                                    command.expirationDate()))
+                            .retrieve()
+                            .toEntity(JsonNode.class);
+                });
+        return submissionConversionMutation(response, tenantId, submissionId);
+    }
+
+    /**
      * Accepts the two list shapes an expert may return during rollout: a bare
      * array, or a page envelope whose {@code items} (or {@code submissions})
      * member carries the array.
@@ -933,6 +964,62 @@ public class PolicyClient {
                 response.getStatusCode()));
     }
 
+    /**
+     * Projects the expert conversion response. Two expert shapes are accepted:
+     * the {@code {submission, policy}} envelope, and a bare created policy from
+     * an expert that has not adopted the envelope yet. In the bare case the
+     * converted submission is read back with the same tenant scope so the
+     * public projection still carries both members. A missing or unreadable
+     * policy is an expert-boundary failure, never a public {@code 500}.
+     */
+    private Mutation<SubmissionConversionResult> submissionConversionMutation(
+            ResponseEntity<JsonNode> response, UUID tenantId, UUID submissionId) {
+        JsonNode body = response.getBody();
+        if (body == null || !body.isObject()) {
+            throw badExpertResponse();
+        }
+        JsonNode submissionNode = body.get("submission");
+        JsonNode policyNode = body.get("policy");
+        if ((policyNode == null || policyNode.isNull()) && looksLikePolicy(body)) {
+            policyNode = body;
+        }
+        if (policyNode == null || !policyNode.isObject()) {
+            throw badExpertResponse();
+        }
+        PolicyDto policy;
+        try {
+            policy = objectMapper.treeToValue(policyNode, PolicyDto.class);
+        } catch (JsonProcessingException | IllegalArgumentException ex) {
+            throw badExpertResponse();
+        }
+        if (policy == null || policy.id() == null) {
+            throw badExpertResponse();
+        }
+        SubmissionDto submission;
+        if (submissionNode == null || submissionNode.isNull()) {
+            // An expert that returns only the policy has already committed the
+            // submission link, so the scoped read projects the converted row.
+            submission = findSubmission(tenantId, submissionId);
+        } else if (submissionNode.isObject()) {
+            try {
+                submission = toSubmission(
+                        objectMapper.treeToValue(submissionNode, ExpertSubmission.class),
+                        tenantId);
+            } catch (JsonProcessingException | IllegalArgumentException ex) {
+                throw badExpertResponse();
+            }
+        } else {
+            throw badExpertResponse();
+        }
+        return new Mutation<>(
+                new SubmissionConversionResult(submission, policy),
+                response.getHeaders().getETag(), isReplayed(response));
+    }
+
+    private static boolean looksLikePolicy(JsonNode body) {
+        return body.hasNonNull("id") && body.hasNonNull("policyNumber");
+    }
+
     private static SubmissionDto toSubmission(ExpertSubmission view, UUID tenantId) {
         if (view == null || view.submissionId() == null) {
             throw badExpertResponse();
@@ -942,7 +1029,8 @@ public class PolicyClient {
                 projectedTenantId, view.applicantPartyId(), view.productCode(),
                 view.requestedEffectiveDate(), view.requestedLimitAmount(),
                 view.requestedLimitCurrency(), view.tortCodes(), view.notes(),
-                view.status(), view.version(), view.createdAt(), view.updatedAt());
+                view.status(), view.version(), view.createdAt(), view.updatedAt(),
+                view.policyId());
     }
 
     private static ApiException badExpertResponse() {
@@ -1769,13 +1857,20 @@ public class PolicyClient {
             String status,
             Integer version,
             @JsonAlias("created_at") Instant createdAt,
-            @JsonAlias("updated_at") Instant updatedAt
+            @JsonAlias("updated_at") Instant updatedAt,
+            @JsonAlias("policy_id") UUID policyId
     ) {
     }
 
     /** Wire shape of the expert submission status command. */
     @JsonInclude(JsonInclude.Include.NON_NULL)
     record ExpertSubmissionStatusRequest(String status, String reason) {
+    }
+
+    /** Wire shape of the expert submission conversion command. */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    record ExpertSubmissionConversionRequest(BigDecimal premiumAmount, String premiumCurrency,
+                                             LocalDate expirationDate) {
     }
 
     /** Wire shape of the policy legal entity assignment command. */

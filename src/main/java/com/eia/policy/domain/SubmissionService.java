@@ -49,4 +49,18 @@ public class SubmissionService {
         return client.updateSubmissionStatus(tenantId, submissionId, command, ifMatch,
                 IdempotencyKeys.normalize(idempotencyKey));
     }
+
+    /**
+     * Converts a submission into a policy. The expert owns the conversion
+     * eligibility and the submission-to-policy linkage; the domain normalizes
+     * the optional idempotency key and forwards the tenant and DIRECT book
+     * context. A fresh conversion is {@code 201}; an expert replay is
+     * {@code 200} with the replay marker.
+     */
+    public Mutation<SubmissionConversionResult> convert(UUID tenantId, UUID submissionId,
+                                                        ConvertSubmissionCommand command,
+                                                        String idempotencyKey) {
+        return client.convertSubmission(tenantId, submissionId, command,
+                IdempotencyKeys.normalize(idempotencyKey));
+    }
 }

@@ -28,6 +28,9 @@ class SubmissionServiceTest {
             "broker intake");
     private static final UpdateSubmissionStatusCommand STATUS =
             new UpdateSubmissionStatusCommand("QUOTED", "ready to quote");
+    private static final ConvertSubmissionCommand CONVERT =
+            new ConvertSubmissionCommand(new BigDecimal("12500.0000"), "USD",
+                    LocalDate.of(2027, 1, 1));
 
     private final PolicyClient client = mock(PolicyClient.class);
     private final SubmissionService service = new SubmissionService(client);
@@ -81,6 +84,29 @@ class SubmissionServiceTest {
     }
 
     @Test
+    void convertsAndNormalizesTheIdempotencyKey() {
+        Mutation<SubmissionConversionResult> mutation = new Mutation<>(
+                new SubmissionConversionResult(submission(), null), "\"0\"", false);
+        when(client.convertSubmission(TENANT, SUBMISSION_ID, CONVERT, "convert-key"))
+                .thenReturn(mutation);
+
+        assertThat(service.convert(TENANT, SUBMISSION_ID, CONVERT, " convert-key "))
+                .isSameAs(mutation);
+        verify(client).convertSubmission(TENANT, SUBMISSION_ID, CONVERT, "convert-key");
+    }
+
+    @Test
+    void createsTheConversionWithoutAnIdempotencyKeyWhenNoneIsSupplied() {
+        Mutation<SubmissionConversionResult> mutation = new Mutation<>(
+                new SubmissionConversionResult(submission(), null), null, false);
+        when(client.convertSubmission(TENANT, SUBMISSION_ID, CONVERT, null))
+                .thenReturn(mutation);
+
+        assertThat(service.convert(TENANT, SUBMISSION_ID, CONVERT, null)).isSameAs(mutation);
+        verify(client).convertSubmission(TENANT, SUBMISSION_ID, CONVERT, null);
+    }
+
+    @Test
     void rejectsAnOverlongIdempotencyKeyBeforeCallingTheExpert() {
         String key = "x".repeat(IdempotencyKeys.MAX_LENGTH + 1);
 
@@ -92,6 +118,20 @@ class SubmissionServiceTest {
                     assertThat(api.code()).isEqualTo("INVALID_IDEMPOTENCY_KEY");
                     assertThat(api.details()).singleElement().satisfies(issue ->
                             assertThat(issue.field()).isEqualTo("Idempotency-Key"));
+                });
+        verifyNoInteractions(client);
+    }
+
+    @Test
+    void rejectsAnOverlongConversionIdempotencyKeyBeforeCallingTheExpert() {
+        String key = "x".repeat(IdempotencyKeys.MAX_LENGTH + 1);
+
+        assertThatThrownBy(() -> service.convert(TENANT, SUBMISSION_ID, CONVERT, key))
+                .isInstanceOf(ApiException.class)
+                .satisfies(ex -> {
+                    ApiException api = (ApiException) ex;
+                    assertThat(api.status()).isEqualTo(HttpStatus.BAD_REQUEST);
+                    assertThat(api.code()).isEqualTo("INVALID_IDEMPOTENCY_KEY");
                 });
         verifyNoInteractions(client);
     }
