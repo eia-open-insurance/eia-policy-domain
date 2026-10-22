@@ -3,6 +3,7 @@ package com.eia.policy.domain;
 import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -311,6 +312,98 @@ public class PolicyClient {
                                            RenewPolicyCommand command) {
         return mutateDirect("renew policy", "/internal/v1/policies/{id}/renew", tenantId, policyId,
                 command, PolicyDto.class);
+    }
+
+    // ------------------------------------------------------------------
+    // Premium audit (SPEC 11.2.8 policy.premium-audit). The expert owns the
+    // audit eligibility, the new version, the premium delta, and the posting
+    // event. It normally returns the updated policy alone; an envelope
+    // carrying the policy and an audit row is also accepted.
+    // ------------------------------------------------------------------
+
+    /**
+     * Applies an audited premium to a policy. The expert's bare
+     * {@link PolicyDto} response is the current shape; an envelope is also
+     * accepted with the policy under {@code policy} (or {@code updatedPolicy})
+     * and the audit under {@code premiumAudit}, {@code audit},
+     * {@code auditResult}, or {@code result}. The tenant and DIRECT book are
+     * forwarded on every call, together with the optional {@code If-Match} and
+     * {@code Idempotency-Key} headers.
+     */
+    public Mutation<PremiumAuditResult> applyPremiumAudit(
+            UUID tenantId, UUID policyId, ApplyPremiumAuditCommand command,
+            String ifMatch, String idempotencyKey) {
+        ResponseEntity<JsonNode> response = callEntity("apply premium audit", () -> {
+            RestClient.RequestBodySpec spec = client.post()
+                    .uri(uri -> uri.path("/internal/v1/policies/{id}/premium-audit")
+                            .queryParam("tenantId", tenantId)
+                            .build(policyId))
+                    .header(TENANT_HEADER, tenantId.toString())
+                    .header(BookScope.BOOK_HEADER, BookScope.DIRECT);
+            if (ifMatch != null && !ifMatch.isBlank()) {
+                spec = spec.header(HttpHeaders.IF_MATCH, ifMatch);
+            }
+            if (idempotencyKey != null && !idempotencyKey.isBlank()) {
+                spec = spec.header("Idempotency-Key", idempotencyKey);
+            }
+            return spec.body(new ExpertPremiumAuditRequest(command.auditedPremium(),
+                            command.effectiveDate(), command.reason(), command.approvedBy(),
+                            command.approvalRef()))
+                    .retrieve()
+                    .toEntity(JsonNode.class);
+        });
+        return new Mutation<>(toPremiumAuditResult(response.getBody()),
+                response.getHeaders().getETag(), isReplayed(response));
+    }
+
+    /**
+     * Projects either expert response shape onto the internal result. A bare
+     * policy body is used as the policy and leaves the audit null; an envelope
+     * carries both members and the controller publishes the public envelope.
+     * Missing or unreadable bodies are expert-boundary failures, never a public
+     * {@code 500}.
+     */
+    private PremiumAuditResult toPremiumAuditResult(JsonNode body) {
+        if (body == null || body.isNull() || !body.isObject()) {
+            throw new ApiException(HttpStatus.BAD_GATEWAY, "EXPERT_BAD_RESPONSE",
+                    "Policy expert returned an empty response");
+        }
+        JsonNode policyNode = objectMember(body, "policy", "updatedPolicy", "policyDto");
+        if (policyNode == null) {
+            policyNode = body;
+        }
+        PolicyDto policy;
+        try {
+            policy = objectMapper.treeToValue(policyNode, PolicyDto.class);
+        } catch (JsonProcessingException ex) {
+            throw new ApiException(HttpStatus.BAD_GATEWAY, "EXPERT_BAD_RESPONSE",
+                    "Policy expert returned an unreadable policy response");
+        }
+        if (policy == null || policy.id() == null || policy.policyNumber() == null) {
+            throw new ApiException(HttpStatus.BAD_GATEWAY, "EXPERT_BAD_RESPONSE",
+                    "Policy expert returned an empty response");
+        }
+        JsonNode auditNode = objectMember(body, "premiumAudit", "audit", "auditResult", "result");
+        PremiumAuditDto premiumAudit = null;
+        if (auditNode != null) {
+            try {
+                premiumAudit = objectMapper.treeToValue(auditNode, PremiumAuditDto.class);
+            } catch (JsonProcessingException ex) {
+                throw new ApiException(HttpStatus.BAD_GATEWAY, "EXPERT_BAD_RESPONSE",
+                        "Policy expert returned an unreadable premium audit response");
+            }
+        }
+        return new PremiumAuditResult(policy, premiumAudit);
+    }
+
+    private static JsonNode objectMember(JsonNode body, String... names) {
+        for (String name : names) {
+            JsonNode node = body.get(name);
+            if (node != null && node.isObject()) {
+                return node;
+            }
+        }
+        return null;
     }
 
     // ------------------------------------------------------------------
@@ -1097,6 +1190,16 @@ public class PolicyClient {
         }
         JsonNode node = body.get(field);
         return node == null || node.isNull() ? null : node.asText();
+    }
+
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    record ExpertPremiumAuditRequest(
+            BigDecimal auditedPremium,
+            LocalDate effectiveDate,
+            String reason,
+            UUID approvedBy,
+            UUID approvalRef
+    ) {
     }
 
     private record ExpertCreatePolicyRequest(

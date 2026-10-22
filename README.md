@@ -45,6 +45,7 @@ All additive under `/api/v1/policies/{policyId}`:
 | `GET` | `/reinstatements` | Reinstatement history |
 | `POST` | `/reinstate` | Reinstate with approval and premium evidence |
 | `POST` | `/renew` | Renew into a successor term |
+| `POST` | `/premium-audit` | Apply an audited premium; returns the policy and audit |
 | `GET`/`POST` | `/billing` | Billing plan and installments / create the plan |
 | `PATCH` | `/billing/installments/{installmentId}` | Record an installment's payment state |
 | `GET`/`POST` | `/credit-notes` | Credit note list / request a credit note |
@@ -79,6 +80,26 @@ billing call, and maps the expert's `{plan, installments, summary}` view to the
 flat public projection (deriving a coherent summary when an older expert omits
 it). A supplied non-DIRECT book is `404 BOOK_SCOPE_VIOLATION`, and expert `400`,
 `404`, and `409` problems reach the caller unchanged.
+
+### Premium audit
+
+`POST /api/v1/policies/{policyId}/premium-audit` applies an audited premium to
+a policy from `{auditedPremium, effectiveDate, reason, approvedBy?,
+approvalRef?}`. `auditedPremium` must be non-negative with at most four
+fraction digits, `effectiveDate` is required, and `reason` is required up to
+500 characters. The response is the updated `PolicyDto` (including the new
+`premiumAmount`, version, and any program/legal-entity links) when the expert
+returns a bare policy, which is the current expert shape. When the expert also
+returns an audit row, the response is `{policy, premiumAudit}` with
+`premiumAudit` as `{auditId, policyId, auditedPremium, previousPremium,
+premiumDelta, currency, effectiveDate, reason, approvedBy, approvalRef, status,
+createdAt}`. A fresh application returns `201`; an expert replay is published as
+`200` with `Idempotent-Replayed: true`. The domain forwards the
+tenant query scope, `X-EIA-Tenant`, `X-EIA-Book: DIRECT`, the optional
+`If-Match` tag, and the optional `Idempotency-Key`, echoes the expert `ETag`
+(falling back to the returned policy's version), and preserves expert `400`,
+`404`, and `409` problems. A supplied non-DIRECT book is `404
+BOOK_SCOPE_VIOLATION`; an absent book is accepted for compatibility.
 
 ### Premium receivables
 

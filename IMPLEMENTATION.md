@@ -8,6 +8,8 @@ second slice adds pass-through routes for versions, coverage and limits,
 aggregate erosion, endorsements, insureds and locations, cancellation,
 reinstatement, and renewal into a successor term. Billing adds the plan and
 installment schedule projection under the same tenant and DIRECT-book context.
+The premium-audit route applies an audited premium and returns the updated
+policy plus the audit row.
 A cross-policy premium-receivable read projects installments as receivables for
 the collections/ageing view, the installment dunning route records and reads the
 collections actions, the credit-note route requests, lists, advances, and reverses
@@ -25,6 +27,7 @@ utilization.
 | `PolicyController` / `PolicyService` | First-slice public routes and lifecycle |
 | `PolicyContractController` / `PolicyContractService` | Second-slice public routes, renewal, page link rebuild, header validation |
 | `PolicyBillingController` / `PolicyBillingService` | Billing plan and installment routes; DIRECT-book guard |
+| `PolicyPremiumAuditController` / `PolicyPremiumAuditService` | Policy `POST .../premium-audit`; DIRECT-book guard, `If-Match` and idempotency validation |
 | `PolicyMassTortProfileController` / `PolicyMassTortProfileService` | Mass tort profile read/replace route; DIRECT-book guard |
 | `ReceivableController` / `ReceivableService` | Cross-policy `GET /api/v1/billing/installments`; status/limit normalization |
 | `DunningController` / `DunningService` | Installment `GET`/`POST .../dunning`; DIRECT-book guard |
@@ -35,6 +38,9 @@ utilization.
 | `ProgramDto` | Public program projection with the optional capacity limit and expert-derived aggregates |
 | `CreateProgramCommand` | Program create body; shape validation and the optional capacity pair |
 | `BillingPlan`, `BillingSummary`, `Installment` | Public billing projections and their credited/outstanding totals |
+| `PremiumAuditResult` | Public envelope used when the expert returns the updated policy and an audit row |
+| `PremiumAuditDto` | Audit-row projection used by that envelope |
+| `ApplyPremiumAuditCommand` | Premium-audit request body; shape validation only |
 | `LegalEntityDto` | Public legal entity projection |
 | `CreateLegalEntityCommand` | Legal entity create body; shape validation only |
 | `UpdatePolicyLegalEntityCommand` | Policy issuer body; shape validation only |
@@ -140,6 +146,38 @@ INSTALLMENT_NOT_CREDITABLE`, an amount above the uncredited remainder is `409
 CREDIT_NOTE_EXCEEDS_INSTALLMENT`, and an out-of-order or terminal transition is
 `409 INVALID_CREDIT_NOTE_TRANSITION`. The expert side of this contract lives in
 `eia-policy-expert`; this repository contains the domain adapter only.
+
+## Premium-audit expert contract
+
+The domain forwards `POST /internal/v1/policies/{policyId}/premium-audit` with
+`X-EIA-Tenant`, `X-EIA-Book: DIRECT`, the `tenantId` query scope, and the
+optional `If-Match` and `Idempotency-Key` headers. The payload is
+`{auditedPremium, effectiveDate, reason, approvedBy?, approvalRef?}`, with the
+two approval members omitted when the caller does not supply them. The current
+expert returns the updated `PolicyDto` directly with `201` and the advanced
+`ETag`; the domain publishes that policy DTO as the response body. It also
+accepts an envelope carrying the updated policy and the audit row: the policy
+may sit under `policy`, `updatedPolicy`, or `policyDto` and the audit under
+`premiumAudit`, `audit`, `auditResult`, or `result`; in that case the domain
+publishes `{policy, premiumAudit}`. The audit projection is
+`{auditId, policyId, auditedPremium, previousPremium, premiumDelta, currency,
+effectiveDate, reason, approvedBy, approvalRef, status, createdAt}` with the
+monetary members serialized as decimal strings; the domain accepts the expert's
+`id`/`premiumAuditId` identity and SPEC-style aliases (`policy_id`,
+`audited_premium`, `previous_premium`, `premium_delta`, `audited_premium_amount`,
+`previous_premium_amount`, `premium_delta_amount`, `premium_currency`,
+`effective_date`, `audit_date`, `approved_by`, `approval_ref`, `created_at`,
+`auditedAt`). A fresh application returns `201`; a response carrying
+`Idempotent-Replayed: true` or a `200` status is published as `200`. The expert
+owns the audit eligibility, the new policy version, the previous-premium/delta
+calculation, the approval gate, and the posting event, so its `400`/`404`/`409`
+problems are preserved. A missing policy is `404 POLICY_NOT_FOUND`, a stale
+`If-Match` is `409 CONCURRENT_MODIFICATION`, a no-op audit is
+`400 NO_PREMIUM_CHANGE`, and an ineligible status is
+`409 PREMIUM_AUDIT_NOT_ALLOWED`. The current expert does not replay on
+`Idempotency-Key`; the domain forwards the key so a future expert can implement
+that replay contract without a domain change. The expert side of this contract
+lives in `eia-policy-expert`; this repository contains the domain adapter only.
 
 ## Mass tort profile expert contract
 
@@ -271,6 +309,16 @@ headers, the create payload with and without the capacity pair, the
 that omits the derived members, and preserved `400`/`404`/`409` problems;
 `ProgramControllerTest` covers the create/list/read routes, the capacity-pair
 validation, tenant/book handling, and problem propagation.
+`PolicyPremiumAuditClientTest` uses `MockRestServiceServer` for the
+premium-audit tenant/DIRECT headers, the request payload with and without the
+optional approval members, the bare policy response (the current expert shape),
+the optional `{policy, premiumAudit}` envelope, the `audit` alias, the replay
+marker, the ETag, and preserved `400`/`404`/`409` problems;
+`PolicyPremiumAuditControllerTest` covers the route, `201`/`200` status
+selection, the bare-policy and envelope response shapes, ETag echo and fallback,
+body validation, tenant/book handling, and problem propagation, and
+`PolicyPremiumAuditServiceTest` covers delegation, idempotency-key
+normalization, and `If-Match`/key rejection before the expert call.
 
 ## Known SPEC gaps in this slice
 

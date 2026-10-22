@@ -130,6 +130,16 @@ The format is based on Keep a Changelog and the project uses Semantic Versioning
   while every other note leaves both null. The expert owns the tenant/policy
   scope and refundability checks, and expert `400`/`404`/`409` problems are
   preserved.
+- Premium audit. `POST /api/v1/policies/{policyId}/premium-audit` applies
+  `{auditedPremium, effectiveDate, reason, approvedBy?, approvalRef?}` and
+  returns the updated `PolicyDto`, or `{policy, premiumAudit}` when the expert
+  supplies an audit row. The optional audit is
+  `{auditId, policyId, auditedPremium, previousPremium, premiumDelta, currency,
+  effectiveDate, reason, approvedBy, approvalRef, status, createdAt}`. The
+  tenant query, `X-EIA-Tenant`, `X-EIA-Book: DIRECT`, the optional `If-Match`,
+  and the optional `Idempotency-Key` are forwarded; a fresh audit is `201`, an
+  expert replay is published as `200` with `Idempotent-Replayed: true`, and
+  expert `400`/`404`/`409` problems are preserved.
 
 ### Changed
 
