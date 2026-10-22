@@ -37,6 +37,10 @@ utilization.
 | `LegalEntityController` / `LegalEntityService` | Legal entity `POST`/`GET` catalog routes; DIRECT-book guard |
 | `PolicyLegalEntityController` / `PolicyLegalEntityService` | Policy issuer `PATCH` route; DIRECT-book guard |
 | `ProgramController` / `ProgramService` | Program `POST`/`GET` catalog routes; date and capacity-pair validation; DIRECT-book guard |
+| `SubmissionController` / `SubmissionService` | Underwriting submission list/read/create/status routes; DIRECT-book guard and idempotency normalization |
+| `SubmissionDto` | Public underwriting submission projection with JSON requested-limits and exposures documents |
+| `CreateSubmissionCommand` | Submission create body; applicant/product requirements and optional requested-risk facts |
+| `UpdateSubmissionStatusCommand` | Submission status body; shape validation only |
 | `ProgramDto` | Public program projection with the optional capacity limit and expert-derived aggregates |
 | `CreateProgramCommand` | Program create body; shape validation and the optional capacity pair |
 | `BillingPlan`, `BillingSummary`, `Installment` | Public billing projections and their credited/outstanding totals |
@@ -264,6 +268,34 @@ entity is `404 LEGAL_ENTITY_NOT_FOUND`, a duplicate code is
 `409 CONCURRENT_MODIFICATION`. The expert side of this contract lives in
 `eia-policy-expert`; this repository contains the domain adapter only.
 
+## Underwriting submission expert contract
+
+The domain forwards `GET`/`POST /internal/v1/policies/submissions`,
+`GET /internal/v1/policies/submissions/{submissionId}`, and
+`PATCH /internal/v1/policies/submissions/{submissionId}/status` with
+`X-EIA-Tenant`, `X-EIA-Book: DIRECT`, and the `tenantId` query scope. `POST`
+sends `{submissionNumber?, applicantPartyId, productId, programId?,
+requestedEffectiveDate?, requestedLimits?, requestedCoverages?, tortCodes?,
+exposures?, owner?}`; `PATCH` sends `{status, reason?}` and includes `reason`
+only when it is supplied. The expert returns the flat `{submissionId,
+submissionNumber, applicantPartyId, productId, programId,
+requestedEffectiveDate, requestedLimits, requestedCoverages, tortCodes,
+exposures, status, owner, receivedAt, updatedAt, version?}` row; the domain
+accepts the expert's `id` identity and the SPEC column aliases (`submission_id`,
+`submission_number`, `applicant_party_id`, `product_id`, `program_id`,
+`requested_effective_date`, `requested_limits`, `requested_coverages`,
+`tort_codes`, `received_at`, `updated_at`). `GET` on the collection accepts
+either a bare array or a page envelope with `items` and publishes an array; the
+`requestedLimits` and `exposures` documents are passed through as JSON. The
+optional `Idempotency-Key` is forwarded on create and status; an expert replay
+is `200` with `Idempotent-Replayed: true`. The optional `If-Match` is forwarded
+on status unchanged, so the expert validates any concurrency tag. The expert
+owns the submission number, the applicant and product rules, the
+`RECEIVED`/`CLEARANCE`/`RATING`/`REFERRED`/`QUOTED`/`BOUND`/`DECLINED`/
+`WITHDRAWN` lifecycle, clearance, referral, authority, quote, and bind, so its
+`400`/`404`/`409` problems are preserved. The expert side of this contract lives
+in `eia-policy-expert`; this repository contains the domain adapter only.
+
 ## Verification
 
 ```powershell
@@ -334,6 +366,15 @@ headers, the create payload with and without the capacity pair, the
 that omits the derived members, and preserved `400`/`404`/`409` problems;
 `ProgramControllerTest` covers the create/list/read routes, the capacity-pair
 validation, tenant/book handling, and problem propagation.
+`SubmissionClientTest` uses `MockRestServiceServer` for the underwriting
+submission tenant/DIRECT headers, the array and page-envelope list shapes, the
+create payload with and without an idempotency key, the status payload with and
+without a reason, `If-Match` forwarding, the ETag and replay mapping, and
+preserved `400`/`404`/`409` problems; `SubmissionControllerTest` covers the
+list/read/create/status routes, the array projection, ETag derivation and echo,
+`201`/`200` selection, shape validation, tenant/book handling, and problem
+propagation, and `SubmissionServiceTest` covers delegation and idempotency
+normalization.
 `PolicyPremiumAuditClientTest` uses `MockRestServiceServer` for the
 premium-audit tenant/DIRECT headers, the request payload with and without the
 optional approval members, the bare policy response (the current expert shape),
@@ -359,4 +400,7 @@ normalization, and `If-Match`/key rejection before the expert call.
   by the caller; no approval workflow service is integrated.
 - The domain does not proxy occurrences, claims, reinsurance, billing accounts,
   billing instructions, disputes, commission statements, producer payables, or
-  lineage projections (SPEC 11.2.10/11.2.13) yet.
+  lineage projections (SPEC 11.2.10/11.2.13) yet. Underwriting submissions are
+  proxied, but clearance, referral, rating worksheets, quote, bind, producer
+  licensing, and authority evaluation remain expert-owned and are not
+  orchestrated here.

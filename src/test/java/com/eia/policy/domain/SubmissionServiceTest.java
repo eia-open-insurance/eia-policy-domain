@@ -1,0 +1,103 @@
+package com.eia.policy.domain;
+
+import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpStatus;
+
+import java.time.Instant;
+import java.time.LocalDate;
+import java.util.List;
+import java.util.UUID;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
+
+class SubmissionServiceTest {
+    private static final UUID TENANT = UUID.fromString("11111111-1111-7111-8111-111111111111");
+    private static final UUID SUBMISSION_ID =
+            UUID.fromString("aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa");
+    private static final CreateSubmissionCommand COMMAND = new CreateSubmissionCommand(
+            null, UUID.fromString("22222222-2222-7222-8222-222222222222"),
+            UUID.fromString("bbbbbbbb-bbbb-7bbb-8bbb-bbbbbbbbbbbb"), null,
+            LocalDate.of(2026, 1, 1), null, List.of("GL"), List.of("ASBESTOS"), null, null);
+    private static final UpdateSubmissionStatusCommand STATUS =
+            new UpdateSubmissionStatusCommand("CLEARANCE", "sanctions cleared");
+
+    private final PolicyClient client = mock(PolicyClient.class);
+    private final SubmissionService service = new SubmissionService(client);
+
+    @Test
+    void delegatesTheList() {
+        List<SubmissionDto> submissions = List.of(submission());
+        when(client.findSubmissions(TENANT)).thenReturn(submissions);
+
+        assertThat(service.list(TENANT)).isSameAs(submissions);
+        verify(client).findSubmissions(TENANT);
+    }
+
+    @Test
+    void delegatesTheRead() {
+        SubmissionDto submission = submission();
+        when(client.findSubmission(TENANT, SUBMISSION_ID)).thenReturn(submission);
+
+        assertThat(service.get(TENANT, SUBMISSION_ID)).isSameAs(submission);
+        verify(client).findSubmission(TENANT, SUBMISSION_ID);
+    }
+
+    @Test
+    void createsAndNormalizesTheIdempotencyKey() {
+        Mutation<SubmissionDto> mutation = new Mutation<>(submission(), "\"2\"", false);
+        when(client.createSubmission(TENANT, COMMAND, "sub-key")).thenReturn(mutation);
+
+        assertThat(service.create(TENANT, COMMAND, " sub-key ")).isSameAs(mutation);
+        verify(client).createSubmission(TENANT, COMMAND, "sub-key");
+    }
+
+    @Test
+    void createsWithoutAnIdempotencyKeyWhenNoneIsSupplied() {
+        Mutation<SubmissionDto> mutation = new Mutation<>(submission(), null, false);
+        when(client.createSubmission(TENANT, COMMAND, null)).thenReturn(mutation);
+
+        assertThat(service.create(TENANT, COMMAND, null)).isSameAs(mutation);
+        verify(client).createSubmission(TENANT, COMMAND, null);
+    }
+
+    @Test
+    void updatesTheStatusAndForwardsTheConcurrencyAndIdempotencyScopes() {
+        Mutation<SubmissionDto> mutation = new Mutation<>(submission(), "\"3\"", false);
+        when(client.updateSubmissionStatus(TENANT, SUBMISSION_ID, STATUS, "\"2\"", "status-key"))
+                .thenReturn(mutation);
+
+        assertThat(service.updateStatus(TENANT, SUBMISSION_ID, STATUS, "\"2\"", " status-key "))
+                .isSameAs(mutation);
+        verify(client).updateSubmissionStatus(TENANT, SUBMISSION_ID, STATUS, "\"2\"",
+                "status-key");
+    }
+
+    @Test
+    void rejectsAnOverlongIdempotencyKeyBeforeCallingTheExpert() {
+        String key = "x".repeat(IdempotencyKeys.MAX_LENGTH + 1);
+
+        assertThatThrownBy(() -> service.create(TENANT, COMMAND, key))
+                .isInstanceOf(ApiException.class)
+                .satisfies(ex -> {
+                    ApiException api = (ApiException) ex;
+                    assertThat(api.status()).isEqualTo(HttpStatus.BAD_REQUEST);
+                    assertThat(api.code()).isEqualTo("INVALID_IDEMPOTENCY_KEY");
+                    assertThat(api.details()).singleElement().satisfies(issue ->
+                            assertThat(issue.field()).isEqualTo("Idempotency-Key"));
+                });
+        verifyNoInteractions(client);
+    }
+
+    private static SubmissionDto submission() {
+        return new SubmissionDto(SUBMISSION_ID, "SUB-2026-0000001",
+                UUID.fromString("22222222-2222-7222-8222-222222222222"),
+                UUID.fromString("bbbbbbbb-bbbb-7bbb-8bbb-bbbbbbbbbbbb"), null,
+                LocalDate.of(2026, 1, 1), null, List.of("GL"), List.of("ASBESTOS"), null,
+                "RECEIVED", null, Instant.parse("2026-10-22T09:00:00Z"), null, 2);
+    }
+}

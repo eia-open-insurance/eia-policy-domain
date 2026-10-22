@@ -771,6 +771,161 @@ public class PolicyClient {
     }
 
     // ------------------------------------------------------------------
+    // Underwriting submissions (SPEC 11.2.14). The expert owns the
+    // submission number, the applicant/product rules, clearance and
+    // referral gates, the status transitions, and the quote/bind workflow;
+    // the domain forwards the tenant, DIRECT book, idempotency key, and
+    // optional concurrency tag on every call.
+    // ------------------------------------------------------------------
+
+    /**
+     * Lists the tenant's underwriting submissions. The expert may return a bare
+     * array or a page envelope carrying {@code items}; both wire shapes are
+     * accepted so the public projection stays a simple array.
+     */
+    public List<SubmissionDto> findSubmissions(UUID tenantId) {
+        JsonNode body = call("list underwriting submissions", () -> client.get()
+                .uri(uri -> uri.path("/internal/v1/policies/submissions")
+                        .queryParam("tenantId", tenantId)
+                        .build())
+                .header(TENANT_HEADER, tenantId.toString())
+                .header(BookScope.BOOK_HEADER, BookScope.DIRECT)
+                .retrieve()
+                .body(JsonNode.class));
+        return submissionItems(body).stream()
+                .filter(Objects::nonNull)
+                .map(PolicyClient::toSubmission)
+                .toList();
+    }
+
+    public SubmissionDto findSubmission(UUID tenantId, UUID submissionId) {
+        ExpertSubmission submission = call("get underwriting submission", () -> client.get()
+                .uri(uri -> uri.path("/internal/v1/policies/submissions/{submissionId}")
+                        .queryParam("tenantId", tenantId)
+                        .build(submissionId))
+                .header(TENANT_HEADER, tenantId.toString())
+                .header(BookScope.BOOK_HEADER, BookScope.DIRECT)
+                .retrieve()
+                .body(ExpertSubmission.class));
+        return toSubmission(submission);
+    }
+
+    /**
+     * Creates one submission. A fresh command is {@code 201}; an expert replay
+     * of the same tenant-scoped {@code Idempotency-Key} is {@code 200} with the
+     * replay marker and the original submission.
+     */
+    public Mutation<SubmissionDto> createSubmission(UUID tenantId,
+                                                    CreateSubmissionCommand command,
+                                                    String idempotencyKey) {
+        ResponseEntity<ExpertSubmission> response = callEntity(
+                "create underwriting submission", () -> {
+                    RestClient.RequestBodySpec spec = client.post()
+                            .uri(uri -> uri.path("/internal/v1/policies/submissions")
+                                    .queryParam("tenantId", tenantId)
+                                    .build())
+                            .header(TENANT_HEADER, tenantId.toString())
+                            .header(BookScope.BOOK_HEADER, BookScope.DIRECT);
+                    if (idempotencyKey != null && !idempotencyKey.isBlank()) {
+                        spec = spec.header("Idempotency-Key", idempotencyKey);
+                    }
+                    return spec.body(command).retrieve().toEntity(ExpertSubmission.class);
+                });
+        return submissionMutation(response);
+    }
+
+    /**
+     * Advances a submission through the expert-owned status lifecycle. The
+     * optional {@code If-Match} and {@code Idempotency-Key} headers are
+     * forwarded unchanged; the expert decides whether the tag is current and
+     * whether the command is a replay.
+     */
+    public Mutation<SubmissionDto> updateSubmissionStatus(
+            UUID tenantId, UUID submissionId, UpdateSubmissionStatusCommand command,
+            String ifMatch, String idempotencyKey) {
+        ResponseEntity<ExpertSubmission> response = callEntity(
+                "update underwriting submission status", () -> {
+                    RestClient.RequestBodySpec spec = client.patch()
+                            .uri(uri -> uri.path(
+                                            "/internal/v1/policies/submissions/{submissionId}/status")
+                                    .queryParam("tenantId", tenantId)
+                                    .build(submissionId))
+                            .header(TENANT_HEADER, tenantId.toString())
+                            .header(BookScope.BOOK_HEADER, BookScope.DIRECT);
+                    if (ifMatch != null && !ifMatch.isBlank()) {
+                        spec = spec.header(HttpHeaders.IF_MATCH, ifMatch);
+                    }
+                    if (idempotencyKey != null && !idempotencyKey.isBlank()) {
+                        spec = spec.header("Idempotency-Key", idempotencyKey);
+                    }
+                    return spec.body(new ExpertSubmissionStatusRequest(command.status(),
+                                    command.reason()))
+                            .retrieve()
+                            .toEntity(ExpertSubmission.class);
+                });
+        return submissionMutation(response);
+    }
+
+    /**
+     * Accepts the two list shapes an expert may return during rollout: a bare
+     * array, or a page envelope whose {@code items} (or {@code submissions})
+     * member carries the array.
+     */
+    private List<ExpertSubmission> submissionItems(JsonNode body) {
+        if (body == null || body.isNull()) {
+            throw badExpertResponse();
+        }
+        JsonNode items = body;
+        if (body.isObject()) {
+            items = body.get("items");
+            if (items == null || items.isNull()) {
+                items = body.get("submissions");
+            }
+        }
+        if (items == null || !items.isArray()) {
+            throw badExpertResponse();
+        }
+        List<ExpertSubmission> views = new ArrayList<>();
+        for (JsonNode item : items) {
+            if (item == null || item.isNull()) {
+                continue;
+            }
+            try {
+                views.add(objectMapper.treeToValue(item, ExpertSubmission.class));
+            } catch (JsonProcessingException | IllegalArgumentException ex) {
+                throw badExpertResponse();
+            }
+        }
+        return views;
+    }
+
+    private static Mutation<SubmissionDto> submissionMutation(
+            ResponseEntity<ExpertSubmission> response) {
+        if (response.getBody() == null) {
+            throw badExpertResponse();
+        }
+        return Mutation.of(new ResponseEntity<>(toSubmission(response.getBody()),
+                response.getHeaders(), response.getStatusCode()));
+    }
+
+    private static SubmissionDto toSubmission(ExpertSubmission view) {
+        if (view == null || view.submissionId() == null) {
+            throw badExpertResponse();
+        }
+        return new SubmissionDto(view.submissionId(), view.submissionNumber(),
+                view.applicantPartyId(), view.productId(), view.programId(),
+                view.requestedEffectiveDate(), view.requestedLimits(),
+                view.requestedCoverages(), view.tortCodes(), view.exposures(),
+                view.status(), view.owner(), view.receivedAt(), view.updatedAt(),
+                view.version());
+    }
+
+    private static ApiException badExpertResponse() {
+        return new ApiException(HttpStatus.BAD_GATEWAY, "EXPERT_BAD_RESPONSE",
+                "Policy expert returned an empty response");
+    }
+
+    // ------------------------------------------------------------------
     // Premium receivables: the cross-policy installment view that backs a
     // collections/ageing screen (SPEC 11.2.13). The expert owns the
     // projection and the tenant wall; the domain forwards the tenant and
@@ -1567,6 +1722,37 @@ public class PolicyClient {
             @JsonAlias({"entity_status", "legal_entity_status"}) String status,
             @JsonAlias("created_at") Instant createdAt
     ) {
+    }
+
+    /**
+     * Wire shape of one expert underwriting submission. The public projection is
+     * flat; the aliases accept the expert's {@code id} identity and the SPEC
+     * column names while the internal expert contract settles. The requested
+     * limits and exposures documents are passed through as JSON.
+     */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record ExpertSubmission(
+            @JsonAlias({"id", "submission_id"}) UUID submissionId,
+            @JsonAlias({"submission_number", "number"}) String submissionNumber,
+            @JsonAlias("applicant_party_id") UUID applicantPartyId,
+            @JsonAlias("product_id") UUID productId,
+            @JsonAlias("program_id") UUID programId,
+            @JsonAlias("requested_effective_date") LocalDate requestedEffectiveDate,
+            @JsonAlias("requested_limits") JsonNode requestedLimits,
+            @JsonAlias("requested_coverages") List<String> requestedCoverages,
+            @JsonAlias("tort_codes") List<String> tortCodes,
+            JsonNode exposures,
+            String status,
+            UUID owner,
+            @JsonAlias("received_at") Instant receivedAt,
+            @JsonAlias("updated_at") Instant updatedAt,
+            Integer version
+    ) {
+    }
+
+    /** Wire shape of the expert submission status command. */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    record ExpertSubmissionStatusRequest(String status, String reason) {
     }
 
     /** Wire shape of the policy legal entity assignment command. */

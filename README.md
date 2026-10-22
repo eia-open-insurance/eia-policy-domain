@@ -56,6 +56,14 @@ The expert status, code, `category`, field errors, and `meta` are preserved, so
 `422 BUSINESS_RULE`, `428 APPROVAL_REQUIRED`, and `409` conflicts reach the
 caller unchanged.
 
+Underwriting submissions are a top-level DIRECT-book collection:
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET`/`POST` | `/api/v1/policies/submissions` | Submission list / create |
+| `GET` | `/api/v1/policies/submissions/{submissionId}` | One submission |
+| `PATCH` | `/api/v1/policies/submissions/{submissionId}/status` | Advance the status |
+
 ### Billing plan
 
 `GET /api/v1/policies/{policyId}/billing` returns the plan projection
@@ -144,6 +152,30 @@ policy's version), and preserves expert `400`, `404`, and `409` problems. A
 missing policy is `404 POLICY_NOT_FOUND`, a missing worksheet is `404
 RATING_WORKSHEET_NOT_FOUND`, and a supplied non-DIRECT book is `404
 BOOK_SCOPE_VIOLATION`.
+
+### Underwriting submissions
+
+`GET /api/v1/policies/submissions` returns the tenant's submissions as an array
+of `{submissionId, submissionNumber, applicantPartyId, productId, programId,
+requestedEffectiveDate, requestedLimits, requestedCoverages, tortCodes,
+exposures, status, owner, receivedAt, updatedAt, version?}`. `requestedLimits`
+and `exposures` are free-form JSON documents passed through from the expert, and
+`version` is optional. `POST` creates a submission from `{submissionNumber?,
+applicantPartyId, productId, programId?, requestedEffectiveDate?,
+requestedLimits?, requestedCoverages?, tortCodes?, exposures?, owner?}` and
+returns `201` with the stored projection; the expert numbers the submission when
+`submissionNumber` is omitted. `GET
+/api/v1/policies/submissions/{submissionId}` reads one submission, and `PATCH
+/api/v1/policies/submissions/{submissionId}/status` advances it from
+`{status, reason?}`. The expert owns the
+`RECEIVED`/`CLEARANCE`/`RATING`/`REFERRED`/`QUOTED`/`BOUND`/`DECLINED`/`WITHDRAWN`
+lifecycle, the clearance/referral/authority gates, the applicant and product
+rules, and the quote/bind workflow. The domain forwards the tenant query,
+`X-EIA-Tenant`, `X-EIA-Book: DIRECT`, the optional `Idempotency-Key`, and the
+optional `If-Match`; an expert replay is `200` with `Idempotent-Replayed: true`;
+the expert `ETag` is echoed (falling back to `version`); and expert `400`, `404`,
+and `409` problems reach the caller unchanged. An absent book is accepted; a
+supplied non-DIRECT book is `404 BOOK_SCOPE_VIOLATION`.
 
 ### Premium receivables
 
@@ -392,6 +424,9 @@ The service listens on port 8084. Every request requires `X-EIA-Tenant`.
   `/insureds`, `/locations`, `/cancel`, `/reinstate`, `/renew`, `/billing`,
   `/billing/adjustment`, `/rating`
 - `GET /api/v1/policies/{id}/rating`
+- `GET`/`POST /api/v1/policies/submissions`,
+  `GET /api/v1/policies/submissions/{submissionId}`,
+  `PATCH /api/v1/policies/submissions/{submissionId}/status`
 - `PATCH /api/v1/policies/{id}/billing/installments/{installmentId}`
 - `GET /api/v1/billing/installments?status=&dueBefore=&limit=`
 - `GET`/`POST /api/v1/billing/installments/{installmentId}/dunning`
