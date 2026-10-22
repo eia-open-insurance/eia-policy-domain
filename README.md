@@ -156,26 +156,26 @@ BOOK_SCOPE_VIOLATION`.
 ### Underwriting submissions
 
 `GET /api/v1/policies/submissions` returns the tenant's submissions as an array
-of `{submissionId, submissionNumber, applicantPartyId, productId, programId,
-requestedEffectiveDate, requestedLimits, requestedCoverages, tortCodes,
-exposures, status, owner, receivedAt, updatedAt, version?}`. `requestedLimits`
-and `exposures` are free-form JSON documents passed through from the expert, and
-`version` is optional. `POST` creates a submission from `{submissionNumber?,
-applicantPartyId, productId, programId?, requestedEffectiveDate?,
-requestedLimits?, requestedCoverages?, tortCodes?, exposures?, owner?}` and
-returns `201` with the stored projection; the expert numbers the submission when
-`submissionNumber` is omitted. `GET
-/api/v1/policies/submissions/{submissionId}` reads one submission, and `PATCH
-/api/v1/policies/submissions/{submissionId}/status` advances it from
-`{status, reason?}`. The expert owns the
-`RECEIVED`/`CLEARANCE`/`RATING`/`REFERRED`/`QUOTED`/`BOUND`/`DECLINED`/`WITHDRAWN`
-lifecycle, the clearance/referral/authority gates, the applicant and product
-rules, and the quote/bind workflow. The domain forwards the tenant query,
-`X-EIA-Tenant`, `X-EIA-Book: DIRECT`, the optional `Idempotency-Key`, and the
-optional `If-Match`; an expert replay is `200` with `Idempotent-Replayed: true`;
-the expert `ETag` is echoed (falling back to `version`); and expert `400`, `404`,
-and `409` problems reach the caller unchanged. An absent book is accepted; a
-supplied non-DIRECT book is `404 BOOK_SCOPE_VIOLATION`.
+of `{submissionId, submissionNumber, tenantId, applicantPartyId, productCode,
+requestedEffectiveDate, requestedLimitAmount, requestedLimitCurrency, tortCodes[],
+notes, status, version, createdAt, updatedAt}`. `version` drives the strong
+`ETag`, and `tenantId` is filled from the scoped request because the expert row
+does not expose the tenant column. `POST` creates a submission from
+`{applicantPartyId, productCode, requestedEffectiveDate, requestedLimitAmount,
+requestedLimitCurrency, tortCodes[], notes?}` and returns `201` with the stored
+projection. `GET /api/v1/policies/submissions/{submissionId}` reads one
+submission, and `PATCH /api/v1/policies/submissions/{submissionId}/status`
+advances it from `{status, reason?}`. The expert owns the
+`RECEIVED`/`REFERRED`/`QUOTED`/`BOUND`/`DECLINED`/`WITHDRAWN` lifecycle, the
+applicant and product rules, and the quote/bind workflow. The domain forwards
+the tenant query, `X-EIA-Tenant`, `X-EIA-Book: DIRECT`, the optional
+`Idempotency-Key`, and the optional `If-Match`; an expert replay is `200` with
+`Idempotent-Replayed: true`; the expert `ETag` is echoed (falling back to
+`version`); and expert `400`, `404`, and `409` problems reach the caller
+unchanged. The expert may return the bare projection or a `{submission, ...}`
+envelope, and the collection may be a bare array or an `{items, ...}` page; the
+domain always publishes the flat projection and a bare array. An absent book is
+accepted; a supplied non-DIRECT book is `404 BOOK_SCOPE_VIOLATION`.
 
 ### Premium receivables
 

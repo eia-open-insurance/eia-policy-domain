@@ -3,6 +3,7 @@ package com.eia.policy.domain;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
@@ -19,12 +20,14 @@ class SubmissionServiceTest {
     private static final UUID TENANT = UUID.fromString("11111111-1111-7111-8111-111111111111");
     private static final UUID SUBMISSION_ID =
             UUID.fromString("aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa");
+    private static final UUID APPLICANT_ID =
+            UUID.fromString("22222222-2222-7222-8222-222222222222");
     private static final CreateSubmissionCommand COMMAND = new CreateSubmissionCommand(
-            null, UUID.fromString("22222222-2222-7222-8222-222222222222"),
-            UUID.fromString("bbbbbbbb-bbbb-7bbb-8bbb-bbbbbbbbbbbb"), null,
-            LocalDate.of(2026, 1, 1), null, List.of("GL"), List.of("ASBESTOS"), null, null);
+            APPLICANT_ID, "CGL_PRODUCTS", LocalDate.of(2026, 1, 1),
+            new BigDecimal("1000000.0000"), "USD", List.of("ASBESTOS", "PFAS"),
+            "broker intake");
     private static final UpdateSubmissionStatusCommand STATUS =
-            new UpdateSubmissionStatusCommand("CLEARANCE", "sanctions cleared");
+            new UpdateSubmissionStatusCommand("QUOTED", "ready to quote");
 
     private final PolicyClient client = mock(PolicyClient.class);
     private final SubmissionService service = new SubmissionService(client);
@@ -94,10 +97,11 @@ class SubmissionServiceTest {
     }
 
     private static SubmissionDto submission() {
-        return new SubmissionDto(SUBMISSION_ID, "SUB-2026-0000001",
-                UUID.fromString("22222222-2222-7222-8222-222222222222"),
-                UUID.fromString("bbbbbbbb-bbbb-7bbb-8bbb-bbbbbbbbbbbb"), null,
-                LocalDate.of(2026, 1, 1), null, List.of("GL"), List.of("ASBESTOS"), null,
-                "RECEIVED", null, Instant.parse("2026-10-22T09:00:00Z"), null, 2);
+        return new SubmissionDto(SUBMISSION_ID, "SUB-2026-0000001", TENANT, APPLICANT_ID,
+                "CGL_PRODUCTS", LocalDate.of(2026, 1, 1),
+                new BigDecimal("1000000.0000"), "USD", List.of("ASBESTOS", "PFAS"),
+                "broker intake", "RECEIVED", 2,
+                Instant.parse("2026-10-22T09:00:00Z"),
+                Instant.parse("2026-10-22T10:00:00Z"));
     }
 }

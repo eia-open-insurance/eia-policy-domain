@@ -19,11 +19,10 @@ import java.util.UUID;
 /**
  * Public underwriting-submission surface for the DIRECT book (SPEC 11.2.14).
  * The Policy expert owns the submission number, the applicant/product rules,
- * the clearance/referral/authority gates, the status transitions, and the
- * quote/bind workflow. The domain forwards the tenant and DIRECT book context,
- * the optional {@code Idempotency-Key} on mutations, and the optional
- * {@code If-Match} on status; expert {@code 400}/{@code 404}/{@code 409}
- * problems are preserved unchanged.
+ * the status transitions, and the quote/bind workflow. The domain forwards the
+ * tenant and DIRECT book context, the optional {@code Idempotency-Key} on
+ * mutations, and the optional {@code If-Match} on status; expert
+ * {@code 400}/{@code 404}/{@code 409} problems are preserved unchanged.
  *
  * <p>{@code GET} returns the tenant's submissions as an array. {@code POST}
  * creates one submission and returns {@code 201} (or {@code 200} for an expert

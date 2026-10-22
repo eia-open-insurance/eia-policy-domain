@@ -56,18 +56,19 @@ The format is based on Keep a Changelog and the project uses Semantic Versioning
   `GET`/`POST /api/v1/policies/submissions`,
   `GET /api/v1/policies/submissions/{submissionId}`, and
   `PATCH /api/v1/policies/submissions/{submissionId}/status`. The list is an
-  array of the flat `{submissionId, submissionNumber, applicantPartyId,
-  productId, programId, requestedEffectiveDate, requestedLimits,
-  requestedCoverages, tortCodes, exposures, status, owner, receivedAt,
-  updatedAt, version?}` projection; create starts a submission from
-  `{submissionNumber?, applicantPartyId, productId, programId?,
-  requestedEffectiveDate?, requestedLimits?, requestedCoverages?, tortCodes?,
-  exposures?, owner?}` and status advances it from `{status, reason?}`. The
-  tenant query, `X-EIA-Tenant`, `X-EIA-Book: DIRECT`, the optional
-  `Idempotency-Key`, and the optional `If-Match` are forwarded; the expert
-  `ETag` is echoed (falling back to `version`), a replay is `200` with
+  array of the canonical `{submissionId, submissionNumber, tenantId,
+  applicantPartyId, productCode, requestedEffectiveDate, requestedLimitAmount,
+  requestedLimitCurrency, tortCodes[], notes, status, version, createdAt,
+  updatedAt}` projection; create starts a submission from `{applicantPartyId,
+  productCode, requestedEffectiveDate, requestedLimitAmount,
+  requestedLimitCurrency, tortCodes[], notes?}` and status advances it from
+  `{status, reason?}`. The tenant query, `X-EIA-Tenant`, `X-EIA-Book: DIRECT`,
+  the optional `Idempotency-Key`, and the optional `If-Match` are forwarded; the
+  expert `ETag` is echoed (falling back to `version`), a replay is `200` with
   `Idempotent-Replayed: true`, and expert `400`/`404`/`409` problems are
-  preserved.
+  preserved. Single-submission responses accept a bare row or a
+  `{submission, ...}` envelope, and the collection accepts a bare array or an
+  `{items, ...}` page.
 - `POST /api/v1/policies/{policyId}/renew` renews a policy into a successor
   term from `{effectiveDate, expirationDate, premiumAmount?, premiumCurrency?,
   limitAmount?, limitCurrency?}`. The successor `PolicyDto` exposes

@@ -1,8 +1,8 @@
 package com.eia.policy.domain;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-import com.fasterxml.jackson.databind.JsonNode;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
@@ -10,32 +10,43 @@ import java.util.UUID;
 
 /**
  * Public projection of one underwriting submission (SPEC 11.2.14). The Policy
- * expert owns the submission number, the product/clearance/referral/quote
- * workflow, the status vocabulary, and the applicant and exposure documents;
- * the domain publishes the expert row with the same camel-case members.
+ * expert owns the submission number, the applicant/product rules, the status
+ * transitions, and the quote/bind workflow; the domain publishes the expert
+ * canonical members plus the request tenant scope.
  *
- * <p>{@code requestedLimits} and {@code exposures} are free-form JSON documents
- * carried through unchanged, so an expert can store the SPEC {@code jsonb}
- * shapes without the domain inventing a partial model. {@code version} is
- * optional: when the expert supplies it, the domain uses it for the strong
- * {@code ETag}; an older expert may omit it.</p>
+ * <p>The expert deliberately does not leak the tenant column, so {@code tenantId}
+ * is filled from the scoped request. {@code version} is the aggregate
+ * representation marker used for the strong {@code ETag}.</p>
  */
 @JsonIgnoreProperties(ignoreUnknown = true)
 public record SubmissionDto(
         UUID submissionId,
         String submissionNumber,
+        UUID tenantId,
         UUID applicantPartyId,
-        UUID productId,
-        UUID programId,
+        String productCode,
         LocalDate requestedEffectiveDate,
-        JsonNode requestedLimits,
-        List<String> requestedCoverages,
+        BigDecimal requestedLimitAmount,
+        String requestedLimitCurrency,
         List<String> tortCodes,
-        JsonNode exposures,
+        String notes,
         String status,
-        UUID owner,
-        Instant receivedAt,
-        Instant updatedAt,
-        Integer version
+        Integer version,
+        Instant createdAt,
+        Instant updatedAt
 ) {
+    /**
+     * Compatibility constructor for callers that order the two timestamps
+     * before the optional aggregate version.
+     */
+    public SubmissionDto(UUID submissionId, String submissionNumber, UUID tenantId,
+                         UUID applicantPartyId, String productCode,
+                         LocalDate requestedEffectiveDate, BigDecimal requestedLimitAmount,
+                         String requestedLimitCurrency, List<String> tortCodes,
+                         String notes, String status, Instant createdAt, Instant updatedAt,
+                         Integer version) {
+        this(submissionId, submissionNumber, tenantId, applicantPartyId, productCode,
+                requestedEffectiveDate, requestedLimitAmount, requestedLimitCurrency,
+                tortCodes, notes, status, version, createdAt, updatedAt);
+    }
 }

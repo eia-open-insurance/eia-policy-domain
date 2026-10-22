@@ -1,7 +1,5 @@
 package com.eia.policy.domain;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.JsonNodeFactory;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -10,6 +8,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
@@ -37,45 +36,30 @@ class SubmissionControllerTest {
             UUID.fromString("aaaaaaaa-aaaa-7aaa-8aaa-aaaaaaaaaaaa");
     private static final UUID APPLICANT_ID =
             UUID.fromString("22222222-2222-7222-8222-222222222222");
-    private static final UUID PRODUCT_ID =
-            UUID.fromString("bbbbbbbb-bbbb-7bbb-8bbb-bbbbbbbbbbbb");
-    private static final UUID PROGRAM_ID =
-            UUID.fromString("55555555-5555-7555-8555-555555555555");
-    private static final UUID OWNER_ID =
-            UUID.fromString("cccccccc-cccc-7ccc-8ccc-cccccccccccc");
     private static final String DIRECT = "DIRECT";
     private static final String BASE = "/api/v1/policies/submissions";
     private static final String DETAIL = BASE + "/{submissionId}";
     private static final String STATUS = BASE + "/{submissionId}/status";
 
-    private static final JsonNode REQUESTED_LIMITS = JsonNodeFactory.instance.objectNode()
-            .put("perOccurrence", "1000000.0000")
-            .put("aggregate", "2000000.0000");
-    private static final JsonNode EXPOSURES = JsonNodeFactory.instance.arrayNode()
-            .add(JsonNodeFactory.instance.objectNode()
-                    .put("classCode", "CGL")
-                    .put("amount", "5000000.0000"));
     private static final CreateSubmissionCommand COMMAND = new CreateSubmissionCommand(
-            null, APPLICANT_ID, PRODUCT_ID, PROGRAM_ID, LocalDate.of(2026, 1, 1),
-            REQUESTED_LIMITS, List.of("GL", "UMBRELLA"), List.of("ASBESTOS"), EXPOSURES,
-            OWNER_ID);
+            APPLICANT_ID, "CGL_PRODUCTS", LocalDate.of(2026, 1, 1),
+            new BigDecimal("1000000.0000"), "USD", List.of("ASBESTOS", "PFAS"),
+            "broker intake");
     private static final UpdateSubmissionStatusCommand STATUS_COMMAND =
-            new UpdateSubmissionStatusCommand("CLEARANCE", "sanctions cleared");
+            new UpdateSubmissionStatusCommand("QUOTED", "ready to quote");
     private static final String CREATE_BODY = """
             {
               "applicantPartyId": "%s",
-              "productId": "%s",
-              "programId": "%s",
+              "productCode": "CGL_PRODUCTS",
               "requestedEffectiveDate": "2026-01-01",
-              "requestedLimits": {"perOccurrence": "1000000.0000", "aggregate": "2000000.0000"},
-              "requestedCoverages": ["GL", "UMBRELLA"],
-              "tortCodes": ["ASBESTOS"],
-              "exposures": [{"classCode": "CGL", "amount": "5000000.0000"}],
-              "owner": "%s"
+              "requestedLimitAmount": 1000000.0000,
+              "requestedLimitCurrency": "USD",
+              "tortCodes": ["ASBESTOS", "PFAS"],
+              "notes": "broker intake"
             }
-            """.formatted(APPLICANT_ID, PRODUCT_ID, PROGRAM_ID, OWNER_ID);
+            """.formatted(APPLICANT_ID);
     private static final String STATUS_BODY = """
-            {"status": "CLEARANCE", "reason": "sanctions cleared"}
+            {"status": "QUOTED", "reason": "ready to quote"}
             """;
 
     @Autowired
@@ -94,18 +78,21 @@ class SubmissionControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$[0].submissionId").value(SUBMISSION_ID.toString()))
                 .andExpect(jsonPath("$[0].submissionNumber").value("SUB-2026-0000001"))
+                .andExpect(jsonPath("$[0].tenantId").value(TENANT.toString()))
                 .andExpect(jsonPath("$[0].applicantPartyId").value(APPLICANT_ID.toString()))
-                .andExpect(jsonPath("$[0].productId").value(PRODUCT_ID.toString()))
-                .andExpect(jsonPath("$[0].programId").value(PROGRAM_ID.toString()))
+                .andExpect(jsonPath("$[0].productCode").value("CGL_PRODUCTS"))
                 .andExpect(jsonPath("$[0].requestedEffectiveDate").value("2026-01-01"))
-                .andExpect(jsonPath("$[0].requestedLimits.perOccurrence")
-                        .value("1000000.0000"))
-                .andExpect(jsonPath("$[0].requestedCoverages[0]").value("GL"))
+                .andExpect(jsonPath("$[0].requestedLimitAmount").isNumber())
+                .andExpect(jsonPath("$[0].requestedLimitCurrency").value("USD"))
                 .andExpect(jsonPath("$[0].tortCodes[0]").value("ASBESTOS"))
-                .andExpect(jsonPath("$[0].exposures[0].classCode").value("CGL"))
+                .andExpect(jsonPath("$[0].notes").value("broker intake"))
                 .andExpect(jsonPath("$[0].status").value("RECEIVED"))
-                .andExpect(jsonPath("$[0].owner").value(OWNER_ID.toString()))
-                .andExpect(jsonPath("$[0].version").value(2));
+                .andExpect(jsonPath("$[0].version").value(2))
+                .andExpect(jsonPath("$[0].createdAt").exists())
+                .andExpect(jsonPath("$[0].updatedAt").exists())
+                .andExpect(jsonPath("$[0].productId").doesNotExist())
+                .andExpect(jsonPath("$[0].requestedLimits").doesNotExist())
+                .andExpect(jsonPath("$[0].owner").doesNotExist());
 
         verify(service).list(TENANT);
     }
@@ -121,6 +108,8 @@ class SubmissionControllerTest {
                 .andExpect(header().string("ETag", "\"3\""))
                 .andExpect(jsonPath("$.submissionId").value(SUBMISSION_ID.toString()))
                 .andExpect(jsonPath("$.submissionNumber").value("SUB-2026-0000001"))
+                .andExpect(jsonPath("$.tenantId").value(TENANT.toString()))
+                .andExpect(jsonPath("$.productCode").value("CGL_PRODUCTS"))
                 .andExpect(jsonPath("$.status").value("RECEIVED"));
 
         verify(service).get(TENANT, SUBMISSION_ID);
@@ -195,14 +184,7 @@ class SubmissionControllerTest {
     @Test
     void updatesTheSubmissionStatus() throws Exception {
         when(service.updateStatus(TENANT, SUBMISSION_ID, STATUS_COMMAND, "\"2\"", "status-key"))
-                .thenReturn(new Mutation<>(
-                        new SubmissionDto(SUBMISSION_ID, "SUB-2026-0000001", APPLICANT_ID,
-                                PRODUCT_ID, PROGRAM_ID, LocalDate.of(2026, 1, 1),
-                                REQUESTED_LIMITS, List.of("GL", "UMBRELLA"),
-                                List.of("ASBESTOS"), EXPOSURES, "CLEARANCE", OWNER_ID,
-                                Instant.parse("2026-10-22T09:00:00Z"),
-                                Instant.parse("2026-10-22T11:00:00Z"), 3),
-                        "\"3\"", false));
+                .thenReturn(new Mutation<>(submission("QUOTED", 3), "\"3\"", false));
 
         mvc.perform(patch(STATUS, SUBMISSION_ID)
                         .header("X-EIA-Tenant", TENANT.toString())
@@ -215,7 +197,7 @@ class SubmissionControllerTest {
                 .andExpect(header().string("ETag", "\"3\""))
                 .andExpect(header().string("Idempotent-Replayed", "false"))
                 .andExpect(jsonPath("$.submissionId").value(SUBMISSION_ID.toString()))
-                .andExpect(jsonPath("$.status").value("CLEARANCE"));
+                .andExpect(jsonPath("$.status").value("QUOTED"));
 
         verify(service).updateStatus(TENANT, SUBMISSION_ID, STATUS_COMMAND, "\"2\"",
                 "status-key");
@@ -268,7 +250,31 @@ class SubmissionControllerTest {
                 .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
                 .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
                 .andExpect(jsonPath("$.errors[*].field",
-                        hasItems("applicantPartyId", "productId")));
+                        hasItems("applicantPartyId", "productCode", "requestedEffectiveDate",
+                                "requestedLimitAmount", "requestedLimitCurrency")));
+
+        verifyNoInteractions(service);
+    }
+
+    @Test
+    void appliesTheExpertCreateCaps() throws Exception {
+        mvc.perform(post(BASE)
+                        .header("X-EIA-Tenant", TENANT.toString())
+                        .header("X-EIA-Book", DIRECT)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "applicantPartyId": "%s",
+                                  "productCode": "CGL",
+                                  "requestedEffectiveDate": "2026-01-01",
+                                  "requestedLimitAmount": -1,
+                                  "requestedLimitCurrency": "US"
+                                }
+                                """.formatted(APPLICANT_ID)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.errors[*].field",
+                        hasItems("requestedLimitAmount", "requestedLimitCurrency")));
 
         verifyNoInteractions(service);
     }
@@ -355,10 +361,15 @@ class SubmissionControllerTest {
     }
 
     private static SubmissionDto submission(Integer version) {
-        return new SubmissionDto(SUBMISSION_ID, "SUB-2026-0000001", APPLICANT_ID, PRODUCT_ID,
-                PROGRAM_ID, LocalDate.of(2026, 1, 1), REQUESTED_LIMITS,
-                List.of("GL", "UMBRELLA"), List.of("ASBESTOS"), EXPOSURES, "RECEIVED",
-                OWNER_ID, Instant.parse("2026-10-22T09:00:00Z"),
-                Instant.parse("2026-10-22T10:00:00Z"), version);
+        return submission("RECEIVED", version);
+    }
+
+    private static SubmissionDto submission(String status, Integer version) {
+        return new SubmissionDto(SUBMISSION_ID, "SUB-2026-0000001", TENANT, APPLICANT_ID,
+                "CGL_PRODUCTS", LocalDate.of(2026, 1, 1),
+                new BigDecimal("1000000.0000"), "USD", List.of("ASBESTOS", "PFAS"),
+                "broker intake", status, version,
+                Instant.parse("2026-10-22T09:00:00Z"),
+                Instant.parse("2026-10-22T10:00:00Z"));
     }
 }

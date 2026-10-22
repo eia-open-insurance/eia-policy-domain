@@ -772,10 +772,9 @@ public class PolicyClient {
 
     // ------------------------------------------------------------------
     // Underwriting submissions (SPEC 11.2.14). The expert owns the
-    // submission number, the applicant/product rules, clearance and
-    // referral gates, the status transitions, and the quote/bind workflow;
-    // the domain forwards the tenant, DIRECT book, idempotency key, and
-    // optional concurrency tag on every call.
+    // submission number, the applicant/product rules, the status transitions,
+    // and the quote/bind workflow; the domain forwards the tenant, DIRECT
+    // book, idempotency key, and optional concurrency tag on every call.
     // ------------------------------------------------------------------
 
     /**
@@ -794,20 +793,20 @@ public class PolicyClient {
                 .body(JsonNode.class));
         return submissionItems(body).stream()
                 .filter(Objects::nonNull)
-                .map(PolicyClient::toSubmission)
+                .map(view -> toSubmission(view, tenantId))
                 .toList();
     }
 
     public SubmissionDto findSubmission(UUID tenantId, UUID submissionId) {
-        ExpertSubmission submission = call("get underwriting submission", () -> client.get()
+        JsonNode body = call("get underwriting submission", () -> client.get()
                 .uri(uri -> uri.path("/internal/v1/policies/submissions/{submissionId}")
                         .queryParam("tenantId", tenantId)
                         .build(submissionId))
                 .header(TENANT_HEADER, tenantId.toString())
                 .header(BookScope.BOOK_HEADER, BookScope.DIRECT)
                 .retrieve()
-                .body(ExpertSubmission.class));
-        return toSubmission(submission);
+                .body(JsonNode.class));
+        return toSubmission(expertSubmission(body), tenantId);
     }
 
     /**
@@ -818,7 +817,7 @@ public class PolicyClient {
     public Mutation<SubmissionDto> createSubmission(UUID tenantId,
                                                     CreateSubmissionCommand command,
                                                     String idempotencyKey) {
-        ResponseEntity<ExpertSubmission> response = callEntity(
+        ResponseEntity<JsonNode> response = callEntity(
                 "create underwriting submission", () -> {
                     RestClient.RequestBodySpec spec = client.post()
                             .uri(uri -> uri.path("/internal/v1/policies/submissions")
@@ -829,9 +828,9 @@ public class PolicyClient {
                     if (idempotencyKey != null && !idempotencyKey.isBlank()) {
                         spec = spec.header("Idempotency-Key", idempotencyKey);
                     }
-                    return spec.body(command).retrieve().toEntity(ExpertSubmission.class);
+                    return spec.body(command).retrieve().toEntity(JsonNode.class);
                 });
-        return submissionMutation(response);
+        return submissionMutation(response, tenantId);
     }
 
     /**
@@ -843,7 +842,7 @@ public class PolicyClient {
     public Mutation<SubmissionDto> updateSubmissionStatus(
             UUID tenantId, UUID submissionId, UpdateSubmissionStatusCommand command,
             String ifMatch, String idempotencyKey) {
-        ResponseEntity<ExpertSubmission> response = callEntity(
+        ResponseEntity<JsonNode> response = callEntity(
                 "update underwriting submission status", () -> {
                     RestClient.RequestBodySpec spec = client.patch()
                             .uri(uri -> uri.path(
@@ -861,9 +860,9 @@ public class PolicyClient {
                     return spec.body(new ExpertSubmissionStatusRequest(command.status(),
                                     command.reason()))
                             .retrieve()
-                            .toEntity(ExpertSubmission.class);
+                            .toEntity(JsonNode.class);
                 });
-        return submissionMutation(response);
+        return submissionMutation(response, tenantId);
     }
 
     /**
@@ -899,25 +898,51 @@ public class PolicyClient {
         return views;
     }
 
-    private static Mutation<SubmissionDto> submissionMutation(
-            ResponseEntity<ExpertSubmission> response) {
+    /**
+     * Accepts the two single-submission shapes an expert may return: the bare
+     * canonical row, or an envelope whose {@code submission} member carries it.
+     */
+    private ExpertSubmission expertSubmission(JsonNode body) {
+        if (body == null || body.isNull()) {
+            throw badExpertResponse();
+        }
+        JsonNode view = body;
+        if (body.isObject()) {
+            JsonNode wrapped = body.get("submission");
+            if (wrapped != null) {
+                view = wrapped;
+            }
+        }
+        if (view == null || !view.isObject()) {
+            throw badExpertResponse();
+        }
+        try {
+            return objectMapper.treeToValue(view, ExpertSubmission.class);
+        } catch (JsonProcessingException | IllegalArgumentException ex) {
+            throw badExpertResponse();
+        }
+    }
+
+    private Mutation<SubmissionDto> submissionMutation(
+            ResponseEntity<JsonNode> response, UUID tenantId) {
         if (response.getBody() == null) {
             throw badExpertResponse();
         }
-        return Mutation.of(new ResponseEntity<>(toSubmission(response.getBody()),
-                response.getHeaders(), response.getStatusCode()));
+        SubmissionDto submission = toSubmission(expertSubmission(response.getBody()), tenantId);
+        return Mutation.of(new ResponseEntity<>(submission, response.getHeaders(),
+                response.getStatusCode()));
     }
 
-    private static SubmissionDto toSubmission(ExpertSubmission view) {
+    private static SubmissionDto toSubmission(ExpertSubmission view, UUID tenantId) {
         if (view == null || view.submissionId() == null) {
             throw badExpertResponse();
         }
+        UUID projectedTenantId = view.tenantId() == null ? tenantId : view.tenantId();
         return new SubmissionDto(view.submissionId(), view.submissionNumber(),
-                view.applicantPartyId(), view.productId(), view.programId(),
-                view.requestedEffectiveDate(), view.requestedLimits(),
-                view.requestedCoverages(), view.tortCodes(), view.exposures(),
-                view.status(), view.owner(), view.receivedAt(), view.updatedAt(),
-                view.version());
+                projectedTenantId, view.applicantPartyId(), view.productCode(),
+                view.requestedEffectiveDate(), view.requestedLimitAmount(),
+                view.requestedLimitCurrency(), view.tortCodes(), view.notes(),
+                view.status(), view.version(), view.createdAt(), view.updatedAt());
     }
 
     private static ApiException badExpertResponse() {
@@ -1726,27 +1751,25 @@ public class PolicyClient {
 
     /**
      * Wire shape of one expert underwriting submission. The public projection is
-     * flat; the aliases accept the expert's {@code id} identity and the SPEC
-     * column names while the internal expert contract settles. The requested
-     * limits and exposures documents are passed through as JSON.
+     * flat and follows the expert canonical member names; the aliases accept the
+     * expert's {@code id} identity and the SPEC column names.
      */
     @JsonIgnoreProperties(ignoreUnknown = true)
     record ExpertSubmission(
             @JsonAlias({"id", "submission_id"}) UUID submissionId,
             @JsonAlias({"submission_number", "number"}) String submissionNumber,
+            @JsonAlias("tenant_id") UUID tenantId,
             @JsonAlias("applicant_party_id") UUID applicantPartyId,
-            @JsonAlias("product_id") UUID productId,
-            @JsonAlias("program_id") UUID programId,
+            @JsonAlias("product_code") String productCode,
             @JsonAlias("requested_effective_date") LocalDate requestedEffectiveDate,
-            @JsonAlias("requested_limits") JsonNode requestedLimits,
-            @JsonAlias("requested_coverages") List<String> requestedCoverages,
+            @JsonAlias("requested_limit_amount") BigDecimal requestedLimitAmount,
+            @JsonAlias("requested_limit_currency") String requestedLimitCurrency,
             @JsonAlias("tort_codes") List<String> tortCodes,
-            JsonNode exposures,
+            String notes,
             String status,
-            UUID owner,
-            @JsonAlias("received_at") Instant receivedAt,
-            @JsonAlias("updated_at") Instant updatedAt,
-            Integer version
+            Integer version,
+            @JsonAlias("created_at") Instant createdAt,
+            @JsonAlias("updated_at") Instant updatedAt
     ) {
     }
 

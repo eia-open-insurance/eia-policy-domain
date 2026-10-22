@@ -8,7 +8,7 @@ import java.util.UUID;
 /**
  * Public domain facade for underwriting submissions (SPEC 11.2.14). The expert
  * owns the submission number, the applicant/product rules, the status
- * transitions, clearance, referral, quote, and bind; the domain normalizes the
+ * transitions, and the quote/bind workflow; the domain normalizes the
  * idempotency key and forwards the tenant and DIRECT book context.
  */
 @Service
