@@ -19,19 +19,22 @@ import java.util.UUID;
 /**
  * Public underwriting-submission surface for the DIRECT book (SPEC 11.2.14).
  * The Policy expert owns the submission number, the applicant/product rules,
- * the status transitions, and the quote/bind workflow. The domain forwards the
- * tenant and DIRECT book context, the optional {@code Idempotency-Key} on
- * mutations, and the optional {@code If-Match} on status; expert
- * {@code 400}/{@code 404}/{@code 409} problems are preserved unchanged.
+ * the status transitions, the structured referral, and the quote/bind workflow.
+ * The domain forwards the tenant and DIRECT book context, the optional
+ * {@code Idempotency-Key} on mutations, and the optional {@code If-Match} on
+ * status and referral mutations; expert {@code 400}/{@code 404}/{@code 409}
+ * problems are preserved unchanged.
  *
  * <p>{@code GET} returns the tenant's submissions as an array. {@code POST}
  * creates one submission and returns {@code 201} (or {@code 200} for an expert
  * idempotent replay) with the stored projection. {@code PATCH .../{submissionId}/status}
  * advances the submission through the expert-owned lifecycle and returns the
- * updated projection. {@code POST .../{submissionId}/convert} turns one
- * submission into a policy and returns the
- * {@code {submission, policy}} envelope, {@code 201} for a fresh conversion
- * (or {@code 200} for an expert idempotent replay).</p>
+ * updated projection. {@code POST .../{submissionId}/referral} opens or
+ * replaces the structured referral, and {@code POST
+ * .../{submissionId}/referral/decision} decides it; both return the updated
+ * projection. {@code POST .../{submissionId}/convert} turns one submission into
+ * a policy and returns the {@code {submission, policy}} envelope, {@code 201}
+ * for a fresh conversion (or {@code 200} for an expert idempotent replay).</p>
  */
 @RestController
 @RequestMapping("/api/v1/policies/submissions")
@@ -103,6 +106,70 @@ public class SubmissionController {
         BookScope.requireDirectWhenPresent(book);
         Mutation<SubmissionDto> result = service.updateStatus(tenantId, submissionId, command,
                 ifMatch, idempotencyKey);
+        ResponseEntity.BodyBuilder response = ResponseEntity.ok()
+                .header(IDEMPOTENT_REPLAYED, Boolean.toString(result.replayed()));
+        String etag = etag(result);
+        if (etag != null) {
+            response = response.eTag(etag);
+        }
+        return response.body(result.body());
+    }
+
+    /**
+     * Opens or replaces the structured referral on one submission. The body
+     * carries the reason, required authority, assignee, and optional notes; the
+     * expert owns the referrable state, moves the submission to
+     * {@code REFERRED}, and starts the decision at {@code PENDING}. The tenant,
+     * DIRECT book, optional {@code If-Match}, and optional
+     * {@code Idempotency-Key} are forwarded, and expert {@code 400}/{@code 404}/
+     * {@code 409} problems are preserved unchanged.
+     */
+    @PostMapping("/{submissionId}/referral")
+    public ResponseEntity<SubmissionDto> refer(
+            @RequestHeader(TENANT_HEADER) UUID tenantId,
+            @RequestHeader(value = BookScope.BOOK_HEADER, required = false) String book,
+            @PathVariable UUID submissionId,
+            @RequestHeader(value = IF_MATCH, required = false) String ifMatch,
+            @RequestHeader(value = IDEMPOTENCY_KEY, required = false) String idempotencyKey,
+            @Valid @RequestBody ReferSubmissionCommand command) {
+        BookScope.requireDirectWhenPresent(book);
+        Mutation<SubmissionDto> result = service.refer(tenantId, submissionId, command,
+                ifMatch, idempotencyKey);
+        return submissionMutationResponse(result);
+    }
+
+    /**
+     * Decides the submission's pending referral. The body carries the
+     * {@code APPROVED}/{@code DECLINED} decision, the decider, and optional
+     * notes; the expert owns the decision vocabulary and the pending rule.
+     * {@code APPROVED} keeps the submission {@code REFERRED}, while
+     * {@code DECLINED} also moves it to {@code DECLINED}. The tenant, DIRECT
+     * book, optional {@code If-Match}, and optional {@code Idempotency-Key} are
+     * forwarded, and expert {@code 400}/{@code 404}/{@code 409} problems are
+     * preserved unchanged.
+     */
+    @PostMapping("/{submissionId}/referral/decision")
+    public ResponseEntity<SubmissionDto> decideReferral(
+            @RequestHeader(TENANT_HEADER) UUID tenantId,
+            @RequestHeader(value = BookScope.BOOK_HEADER, required = false) String book,
+            @PathVariable UUID submissionId,
+            @RequestHeader(value = IF_MATCH, required = false) String ifMatch,
+            @RequestHeader(value = IDEMPOTENCY_KEY, required = false) String idempotencyKey,
+            @Valid @RequestBody DecideReferralCommand command) {
+        BookScope.requireDirectWhenPresent(book);
+        Mutation<SubmissionDto> result = service.decideReferral(tenantId, submissionId, command,
+                ifMatch, idempotencyKey);
+        return submissionMutationResponse(result);
+    }
+
+    /**
+     * Both referral commands are {@code 200} mutations on an existing
+     * submission. The strong tag echoes the expert first; when an older expert
+     * returns no {@code ETag}, the aggregate {@code version} is the
+     * representation marker used by the rest of the submission API.
+     */
+    private static ResponseEntity<SubmissionDto> submissionMutationResponse(
+            Mutation<SubmissionDto> result) {
         ResponseEntity.BodyBuilder response = ResponseEntity.ok()
                 .header(IDEMPOTENT_REPLAYED, Boolean.toString(result.replayed()));
         String etag = etag(result);

@@ -1026,6 +1026,84 @@ public class PolicyClient {
     }
 
     /**
+     * Opens or replaces the structured referral on a submission. The expert
+     * owns whether the submission is referrable and the pending/approved/
+     * declined decision lifecycle; the domain forwards the tenant, DIRECT
+     * book, and the optional {@code If-Match} and {@code Idempotency-Key}
+     * headers, then publishes the updated submission projection.
+     */
+    public Mutation<SubmissionDto> referSubmission(
+            UUID tenantId, UUID submissionId, ReferSubmissionCommand command) {
+        return referSubmission(tenantId, submissionId, command, null, null);
+    }
+
+    public Mutation<SubmissionDto> referSubmission(
+            UUID tenantId, UUID submissionId, ReferSubmissionCommand command,
+            String ifMatch, String idempotencyKey) {
+        ResponseEntity<JsonNode> response = callEntity(
+                "open underwriting submission referral", () -> {
+                    RestClient.RequestBodySpec spec = client.post()
+                            .uri(uri -> uri.path(
+                                            "/internal/v1/policies/submissions/{submissionId}/referral")
+                                    .queryParam("tenantId", tenantId)
+                                    .build(submissionId))
+                            .header(TENANT_HEADER, tenantId.toString())
+                            .header(BookScope.BOOK_HEADER, BookScope.DIRECT);
+                    if (ifMatch != null && !ifMatch.isBlank()) {
+                        spec = spec.header(HttpHeaders.IF_MATCH, ifMatch);
+                    }
+                    if (idempotencyKey != null && !idempotencyKey.isBlank()) {
+                        spec = spec.header("Idempotency-Key", idempotencyKey);
+                    }
+                    return spec.body(new ExpertReferSubmissionRequest(
+                                    command.reason(), command.authority(),
+                                    command.referredTo(), command.notes()))
+                            .retrieve()
+                            .toEntity(JsonNode.class);
+                });
+        return referralMutation(response, tenantId);
+    }
+
+    /**
+     * Records the decision on the submission's pending referral. The expert
+     * owns the {@code APPROVED}/{@code DECLINED} vocabulary and the pending
+     * rule; the domain forwards the tenant, DIRECT book, and the optional
+     * concurrency/idempotency headers, then publishes the updated submission
+     * projection.
+     */
+    public Mutation<SubmissionDto> decideSubmissionReferral(
+            UUID tenantId, UUID submissionId, DecideReferralCommand command) {
+        return decideSubmissionReferral(tenantId, submissionId, command, null, null);
+    }
+
+    public Mutation<SubmissionDto> decideSubmissionReferral(
+            UUID tenantId, UUID submissionId, DecideReferralCommand command,
+            String ifMatch, String idempotencyKey) {
+        ResponseEntity<JsonNode> response = callEntity(
+                "decide underwriting submission referral", () -> {
+                    RestClient.RequestBodySpec spec = client.post()
+                            .uri(uri -> uri.path(
+                                            "/internal/v1/policies/submissions/{submissionId}/referral/decision")
+                                    .queryParam("tenantId", tenantId)
+                                    .build(submissionId))
+                            .header(TENANT_HEADER, tenantId.toString())
+                            .header(BookScope.BOOK_HEADER, BookScope.DIRECT);
+                    if (ifMatch != null && !ifMatch.isBlank()) {
+                        spec = spec.header(HttpHeaders.IF_MATCH, ifMatch);
+                    }
+                    if (idempotencyKey != null && !idempotencyKey.isBlank()) {
+                        spec = spec.header("Idempotency-Key", idempotencyKey);
+                    }
+                    return spec.body(new ExpertReferralDecisionRequest(
+                                    command.decision(), command.decidedBy(),
+                                    command.notes()))
+                            .retrieve()
+                            .toEntity(JsonNode.class);
+                });
+        return referralMutation(response, tenantId);
+    }
+
+    /**
      * Converts one submission into a policy. The expert owns the conversion
      * eligibility and the submission-to-policy linkage; the domain forwards the
      * tenant, DIRECT book, and the optional idempotency key, then publishes the
@@ -1125,6 +1203,23 @@ public class PolicyClient {
     }
 
     /**
+     * The referral routes are a normal {@code 200} mutation rather than a
+     * create/replay pair, so only an explicit {@code Idempotent-Replayed}
+     * header marks a replay. An absent header is a fresh command even though
+     * the expert status is {@code 200}.
+     */
+    private Mutation<SubmissionDto> referralMutation(
+            ResponseEntity<JsonNode> response, UUID tenantId) {
+        if (response.getBody() == null) {
+            throw badExpertResponse();
+        }
+        SubmissionDto submission = toSubmission(expertSubmission(response.getBody()), tenantId);
+        String replayHeader = response.getHeaders().getFirst("Idempotent-Replayed");
+        boolean replayed = replayHeader != null && Boolean.parseBoolean(replayHeader);
+        return new Mutation<>(submission, response.getHeaders().getETag(), replayed);
+    }
+
+    /**
      * Projects the expert conversion response. Two expert shapes are accepted:
      * the {@code {submission, policy}} envelope, and a bare created policy from
      * an expert that has not adopted the envelope yet. In the bare case the
@@ -1190,7 +1285,9 @@ public class PolicyClient {
                 view.requestedEffectiveDate(), view.requestedLimitAmount(),
                 view.requestedLimitCurrency(), view.tortCodes(), view.notes(),
                 view.status(), view.version(), view.createdAt(), view.updatedAt(),
-                view.policyId());
+                view.policyId(), view.referralReason(), view.referralAuthority(),
+                view.referredTo(), view.referralNotes(), view.referralDecision(),
+                view.referralDecidedBy(), view.referralDecidedAt());
     }
 
     private static ApiException badExpertResponse() {
@@ -2053,13 +2150,34 @@ public class PolicyClient {
             Integer version,
             @JsonAlias("created_at") Instant createdAt,
             @JsonAlias("updated_at") Instant updatedAt,
-            @JsonAlias("policy_id") UUID policyId
+            @JsonAlias("policy_id") UUID policyId,
+            @JsonAlias("referral_reason") String referralReason,
+            @JsonAlias({"referral_authority", "requiredAuthority", "required_authority",
+                    "authority"}) String referralAuthority,
+            @JsonAlias({"referred_to", "assignedTo", "assigned_to"}) String referredTo,
+            @JsonAlias({"referral_notes", "comments"}) String referralNotes,
+            @JsonAlias("referral_decision") String referralDecision,
+            @JsonAlias({"referral_decided_by", "decidedBy", "decided_by"})
+            String referralDecidedBy,
+            @JsonAlias({"referral_decided_at", "decidedAt", "decided_at"})
+            Instant referralDecidedAt
     ) {
     }
 
     /** Wire shape of the expert submission status command. */
     @JsonInclude(JsonInclude.Include.NON_NULL)
     record ExpertSubmissionStatusRequest(String status, String reason) {
+    }
+
+    /** Wire shape of the expert structured-referral command. */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    record ExpertReferSubmissionRequest(String reason, String authority, String referredTo,
+                                        String notes) {
+    }
+
+    /** Wire shape of the expert referral-decision command. */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    record ExpertReferralDecisionRequest(String decision, String decidedBy, String notes) {
     }
 
     /** Wire shape of the expert submission conversion command. */

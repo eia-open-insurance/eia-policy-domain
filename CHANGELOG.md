@@ -80,6 +80,19 @@ The format is based on Keep a Changelog and the project uses Semantic Versioning
   and expert `400`/`404`/`409` problems are preserved. An expert that returns
   only the created policy is also accepted; the domain reads the converted
   submission back and composes the same envelope.
+- `POST /api/v1/policies/submissions/{submissionId}/referral` opens or replaces
+  the structured referral from `{reason, authority, referredTo, notes?}`, and
+  `POST /api/v1/policies/submissions/{submissionId}/referral/decision` records
+  `{decision, decidedBy, notes?}`. Both forward the tenant query,
+  `X-EIA-Tenant`, `X-EIA-Book: DIRECT`, the optional `If-Match`, and the
+  optional `Idempotency-Key`, return `200` with the updated submission and its
+  ETag (falling back to `version`), and preserve expert `400`/`404`/`409`
+  problems including `SUBMISSION_NOT_REFERRABLE` and `REFERRAL_NOT_PENDING`.
+  The submission projection gains the optional
+  `{referralReason, referralAuthority, referredTo, referralNotes,
+  referralDecision, referralDecidedBy, referralDecidedAt}` members; opening a
+  referral starts `referralDecision=PENDING`, `APPROVED` keeps the submission
+  `REFERRED`, and `DECLINED` moves it to `DECLINED`.
 - `POST /api/v1/policies/{policyId}/renew` renews a policy into a successor
   term from `{effectiveDate, expirationDate, premiumAmount?, premiumCurrency?,
   limitAmount?, limitCurrency?}`. The successor `PolicyDto` exposes

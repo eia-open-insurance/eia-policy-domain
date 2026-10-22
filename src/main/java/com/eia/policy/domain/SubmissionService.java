@@ -51,6 +51,41 @@ public class SubmissionService {
     }
 
     /**
+     * Opens or replaces the structured referral on a submission. The expert
+     * owns whether the submission is referrable, moves it to {@code REFERRED},
+     * and starts a pending decision; the domain normalizes the optional
+     * idempotency key and forwards the optional concurrency tag.
+     */
+    public Mutation<SubmissionDto> refer(UUID tenantId, UUID submissionId,
+                                         ReferSubmissionCommand command) {
+        return refer(tenantId, submissionId, command, null, null);
+    }
+
+    public Mutation<SubmissionDto> refer(UUID tenantId, UUID submissionId,
+                                         ReferSubmissionCommand command, String ifMatch,
+                                         String idempotencyKey) {
+        return client.referSubmission(tenantId, submissionId, command, ifMatch,
+                IdempotencyKeys.normalize(idempotencyKey));
+    }
+
+    /**
+     * Records the decision on a pending referral. The expert owns the
+     * approved/declined vocabulary and the pending rule; the domain normalizes
+     * the optional idempotency key and forwards the optional concurrency tag.
+     */
+    public Mutation<SubmissionDto> decideReferral(UUID tenantId, UUID submissionId,
+                                                  DecideReferralCommand command) {
+        return decideReferral(tenantId, submissionId, command, null, null);
+    }
+
+    public Mutation<SubmissionDto> decideReferral(UUID tenantId, UUID submissionId,
+                                                  DecideReferralCommand command, String ifMatch,
+                                                  String idempotencyKey) {
+        return client.decideSubmissionReferral(tenantId, submissionId, command, ifMatch,
+                IdempotencyKeys.normalize(idempotencyKey));
+    }
+
+    /**
      * Converts a submission into a policy. The expert owns the conversion
      * eligibility and the submission-to-policy linkage; the domain normalizes
      * the optional idempotency key and forwards the tenant and DIRECT book

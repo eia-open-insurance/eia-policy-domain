@@ -63,6 +63,8 @@ Underwriting submissions are a top-level DIRECT-book collection:
 | `GET`/`POST` | `/api/v1/policies/submissions` | Submission list / create |
 | `GET` | `/api/v1/policies/submissions/{submissionId}` | One submission |
 | `PATCH` | `/api/v1/policies/submissions/{submissionId}/status` | Advance the status |
+| `POST` | `/api/v1/policies/submissions/{submissionId}/referral` | Open or replace the structured referral |
+| `POST` | `/api/v1/policies/submissions/{submissionId}/referral/decision` | Decide the pending referral |
 | `POST` | `/api/v1/policies/submissions/{submissionId}/convert` | Convert the submission to a policy |
 
 ### Billing plan
@@ -159,10 +161,13 @@ BOOK_SCOPE_VIOLATION`.
 `GET /api/v1/policies/submissions` returns the tenant's submissions as an array
 of `{submissionId, submissionNumber, tenantId, applicantPartyId, productCode,
 requestedEffectiveDate, requestedLimitAmount, requestedLimitCurrency, tortCodes[],
-notes, status, version, createdAt, updatedAt, policyId?}`. `version` drives the
+notes, status, version, createdAt, updatedAt, policyId?, referralReason?,
+referralAuthority?, referredTo?, referralNotes?, referralDecision?,
+referralDecidedBy?, referralDecidedAt?}`. `version` drives the
 strong `ETag`, and `tenantId` is filled from the scoped request because the
 expert row does not expose the tenant column. The optional `policyId` appears
-when the expert exposes the converted-policy link. `POST` creates a submission
+when the expert exposes the converted-policy link. The optional referral
+members appear once a structured referral is opened. `POST` creates a submission
 from `{applicantPartyId, productCode, requestedEffectiveDate,
 requestedLimitAmount, requestedLimitCurrency, tortCodes[], notes?}` and returns
 `201` with the stored projection. `GET /api/v1/policies/submissions/{submissionId}`
@@ -191,6 +196,25 @@ reach the caller unchanged. When the expert returns only the created policy,
 the domain reads the converted submission back and still publishes the
 envelope. The converted-policy link appears as `submission.policyId` when the
 expert exposes it, and the created `policy` is the usual `PolicyDto`.
+
+`POST /api/v1/policies/submissions/{submissionId}/referral` opens or replaces
+the submission's structured referral from `{reason, authority, referredTo,
+notes?}` and returns `200` with the updated submission projection. The expert
+owns whether the submission is referrable (`RECEIVED` or `REFERRED`), moves it
+to `REFERRED`, and starts the decision at `PENDING`; it records
+`referralReason`, `referralAuthority`, `referredTo`, `referralNotes`, and
+`referralDecision` on the submission. `POST .../referral/decision` records the
+decision from `{decision, decidedBy, notes?}`, where `decision` is
+`APPROVED` or `DECLINED`, and returns `200` with the updated projection:
+`APPROVED` keeps the submission `REFERRED`, while `DECLINED` also moves it to
+`DECLINED`, and the response carries `referralDecidedBy` and
+`referralDecidedAt`. The domain forwards the tenant query, `X-EIA-Tenant`,
+`X-EIA-Book: DIRECT`, the optional `If-Match`, and the optional
+`Idempotency-Key`; the expert `ETag` is echoed (falling back to `version`), a
+referral command is published with `Idempotent-Replayed: false` unless the
+expert supplies an explicit replay marker, and expert `400`, `404`, and `409`
+problems (including a non-referrable submission or a non-pending referral) are
+preserved unchanged.
 
 ### Premium receivables
 
@@ -471,6 +495,8 @@ The service listens on port 8084. Every request requires `X-EIA-Tenant`.
 - `GET`/`POST /api/v1/policies/submissions`,
   `GET /api/v1/policies/submissions/{submissionId}`,
   `PATCH /api/v1/policies/submissions/{submissionId}/status`,
+  `POST /api/v1/policies/submissions/{submissionId}/referral`,
+  `POST /api/v1/policies/submissions/{submissionId}/referral/decision`,
   `POST /api/v1/policies/submissions/{submissionId}/convert`
 - `PATCH /api/v1/policies/{id}/billing/installments/{installmentId}`
 - `GET /api/v1/billing/installments?status=&dueBefore=&limit=`
