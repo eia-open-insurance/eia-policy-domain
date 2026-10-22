@@ -123,6 +123,13 @@ The format is based on Keep a Changelog and the project uses Semantic Versioning
   existing shape while `creditedAmount`, `outstandingAmount`, the installment
   status, and the summary totals return to their pre-credit values; expert
   `400`/`404`/`409` problems are preserved.
+- Cancellation-linked credit notes. `CreateCreditNoteCommand` accepts an
+  optional `cancellationId` and forwards it to the expert only when supplied.
+  The `CreditNote` projection gains `cancellationId` and `cancellationNumber`;
+  a linked note carries the cancellation id and its human-readable number,
+  while every other note leaves both null. The expert owns the tenant/policy
+  scope and refundability checks, and expert `400`/`404`/`409` problems are
+  preserved.
 
 ### Changed
 

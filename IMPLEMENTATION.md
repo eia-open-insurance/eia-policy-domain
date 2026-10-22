@@ -106,17 +106,21 @@ contains the domain adapter only.
 The domain forwards `GET` and `POST /internal/v1/policies/{policyId}/credit-notes`
 and `PATCH /internal/v1/policies/{policyId}/credit-notes/{creditNoteId}/status`
 with `X-EIA-Tenant`, `X-EIA-Book: DIRECT`, and the `tenantId` query scope.
-`POST` sends `{amount, currency, reason?}`; `PATCH` sends `{status,
-installmentId?, reason?}` and includes `installmentId` only when the target
-status is `APPLIED` and `reason` only when it is `REVERSED`, so ISSUED and
-CANCELLED keep the unchanged `{status}` payload. The
-expert returns the flat note `{creditNoteId, noteNumber, policyId, amount,
-currency, reason, status, issuedAt, appliedAt, appliedInstallmentId,
-createdAt, reversedAt, reversalReason}`; the domain accepts the expert's `id`
-identity and SPEC column
-aliases (`note_number`, `policy_id`, `issued_at`, `applied_at`,
-`applied_installment_id`, `created_at`, `reversed_at`, `reversal_reason`). `GET`
-returns the policy's notes newest first, or an empty array when none exists.
+`POST` sends `{amount, currency, reason?, cancellationId?}`; `PATCH` sends
+`{status, installmentId?, reason?}` and includes `installmentId` only when the
+target status is `APPLIED` and `reason` only when it is `REVERSED`, so ISSUED
+and CANCELLED keep the unchanged `{status}` payload. The expert returns the flat
+note `{creditNoteId, noteNumber, policyId, amount, currency, reason, status,
+issuedAt, appliedAt, appliedInstallmentId, createdAt, reversedAt,
+reversalReason, cancellationId, cancellationNumber}`; the domain accepts the
+expert's `id` identity and SPEC column aliases (`note_number`, `policy_id`,
+`issued_at`, `applied_at`, `applied_installment_id`, `created_at`,
+`reversed_at`, `reversal_reason`, `cancellation_id`, `cancellation_number`).
+`GET` returns the policy's notes newest first, or an empty array when none
+exists. The optional `cancellationId` links the note to the cancellation whose
+return premium it credits; the expert validates its tenant/policy scope and
+refund eligibility, and a linked note carries the cancellation id plus its
+human-readable `cancellationNumber` while every other note leaves both absent.
 The expert owns the note
 number, the `DRAFT`/`ISSUED`/`APPLIED`/`CANCELLED`/`REVERSED` lifecycle, the
 policy-currency match, the optional 500-character creation reason, the APPLIED
@@ -240,13 +244,18 @@ propagation, and `DunningServiceTest` covers the delegation.
 tenant/DIRECT headers, the request and status payloads including the APPLIED
 `{status, installmentId}` body, the REVERSED `{status, reason}` body (and the
 absence of the installment and of the reason for the transitions that ignore
-them), the identity/column aliases including `reversed_at`/`reversal_reason`,
-the applied installment, the reversal stamp and reason, the newest-first list,
-and preserved `400`/`404`/`409` problems; `PolicyCreditNoteControllerTest`
-covers the list/request/status routes including the APPLIED binding and the
-REVERSED reason, shape validation including the reason cap, tenant/book
-handling, and problem propagation, and `PolicyCreditNoteServiceTest` covers the
-delegation. `PolicyBillingClientTest` and `PolicyReceivableClientTest` also
+them), the optional `cancellationId` create payload (and its absence when not
+supplied), the identity/column aliases including
+`reversed_at`/`reversal_reason` and
+`cancellation_id`/`cancellation_number`, the applied installment, the
+cancellation link, the reversal stamp and reason, the newest-first list,
+and preserved `400`/`404`/`409` problems (including cancellation-link
+problems); `PolicyCreditNoteControllerTest`
+covers the list/request/status routes including the APPLIED binding, the
+REVERSED reason, and the cancellation link, shape validation including the
+reason cap, tenant/book handling, and problem propagation, and
+`PolicyCreditNoteServiceTest` covers the delegation.
+`PolicyBillingClientTest` and `PolicyReceivableClientTest` also
 cover the post-reversal readings where the credited amount is released and
 the outstanding amount is restored without a projection shape change.
 `LegalEntityClientTest` uses `MockRestServiceServer` for the legal entity

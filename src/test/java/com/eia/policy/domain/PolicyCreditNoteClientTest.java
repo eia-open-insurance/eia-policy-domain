@@ -18,6 +18,8 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.not;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.content;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
@@ -26,9 +28,9 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 
 /**
  * Verifies the expert contract behind policy credit notes: the tenant and
- * DIRECT book headers, the request and status payloads, the flat projection
- * with its identity/column aliases, and the preserved {@code 400}/{@code
- * 404}/{@code 409} problems.
+ * DIRECT book headers, the request and status payloads, the optional
+ * cancellation link, the flat projection with its identity/column aliases, and
+ * the preserved {@code 400}/{@code 404}/{@code 409} problems.
  */
 class PolicyCreditNoteClientTest {
     private static final UUID TENANT = UUID.fromString("11111111-1111-7111-8111-111111111111");
@@ -39,6 +41,8 @@ class PolicyCreditNoteClientTest {
             UUID.fromString("ffffffff-ffff-7fff-8fff-ffffffffffff");
     private static final UUID INSTALLMENT_ID =
             UUID.fromString("bbbbbbbb-bbbb-7bbb-8bbb-bbbbbbbbbbbb");
+    private static final UUID CANCELLATION_ID =
+            UUID.fromString("cccccccc-cccc-7ccc-8ccc-cccccccccccc");
     private static final String BASE = "http://expert";
     private static final String NOTES = BASE + "/internal/v1/policies/" + POLICY_ID
             + "/credit-notes";
@@ -74,6 +78,58 @@ class PolicyCreditNoteClientTest {
         assertThat(note.issuedAt()).isNull();
         assertThat(note.appliedAt()).isNull();
         assertThat(note.createdAt()).isEqualTo(Instant.parse("2026-10-20T18:00:00Z"));
+        assertThat(note.cancellationId()).isNull();
+        assertThat(note.cancellationNumber()).isNull();
+        server.verify();
+    }
+
+    @Test
+    void requestsACancellationLinkedCreditNoteAndMapsTheLink() {
+        RestClient.Builder builder = builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        PolicyClient client = new PolicyClient(builder, new ObjectMapper(), BASE);
+
+        server.expect(requestTo(NOTES + "?tenantId=" + TENANT))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(header("X-EIA-Tenant", TENANT.toString()))
+                .andExpect(header("X-EIA-Book", "DIRECT"))
+                .andExpect(content().json("""
+                        {"amount": 1250.50, "currency": "USD", "reason": "CANCELLATION",
+                         "cancellationId": "%s"}
+                        """.formatted(CANCELLATION_ID)))
+                .andRespond(withStatus(HttpStatus.CREATED)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body(cancellationCreditNoteJson()));
+
+        CreditNote note = client.createCreditNote(TENANT, POLICY_ID,
+                new CreateCreditNoteCommand(new BigDecimal("1250.50"), "USD", "CANCELLATION",
+                        CANCELLATION_ID));
+
+        assertThat(note.creditNoteId()).isEqualTo(CREDIT_NOTE_ID);
+        assertThat(note.status()).isEqualTo("DRAFT");
+        assertThat(note.cancellationId()).isEqualTo(CANCELLATION_ID);
+        assertThat(note.cancellationNumber()).isEqualTo("CNCL-2026-0003");
+        server.verify();
+    }
+
+    @Test
+    void doesNotForwardAnAbsentCancellationLink() {
+        RestClient.Builder builder = builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        PolicyClient client = new PolicyClient(builder, new ObjectMapper(), BASE);
+
+        server.expect(requestTo(NOTES + "?tenantId=" + TENANT))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(content().string(not(containsString("cancellationId"))))
+                .andRespond(withStatus(HttpStatus.CREATED)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .body(creditNoteJson()));
+
+        CreditNote note = client.createCreditNote(TENANT, POLICY_ID,
+                new CreateCreditNoteCommand(new BigDecimal("1250.50"), "USD", "CANCELLATION"));
+
+        assertThat(note.cancellationId()).isNull();
+        assertThat(note.cancellationNumber()).isNull();
         server.verify();
     }
 
@@ -264,10 +320,12 @@ class PolicyCreditNoteClientTest {
                         .body("""
                                 [{"credit_note_id": "%s", "note_number": "CN-2026-0009",
                                   "policy_id": "%s", "amount": "75.0000", "currency": "EUR",
-                                  "reason": "OVERPAYMENT", "status": "DRAFT",
+                                  "reason": "CANCELLATION", "status": "DRAFT",
                                   "issued_at": null, "applied_at": null,
-                                  "created_at": "2026-10-20T18:00:00Z"}]
-                                """.formatted(CREDIT_NOTE_ID, POLICY_ID)));
+                                  "created_at": "2026-10-20T18:00:00Z",
+                                  "cancellation_id": "%s",
+                                  "cancellation_number": "CNCL-2026-0003"}]
+                                """.formatted(CREDIT_NOTE_ID, POLICY_ID, CANCELLATION_ID)));
 
         List<CreditNote> notes = client.findCreditNotes(TENANT, POLICY_ID);
 
@@ -277,6 +335,8 @@ class PolicyCreditNoteClientTest {
             assertThat(note.policyId()).isEqualTo(POLICY_ID);
             assertThat(note.amount()).isEqualByComparingTo("75.0000");
             assertThat(note.createdAt()).isEqualTo(Instant.parse("2026-10-20T18:00:00Z"));
+            assertThat(note.cancellationId()).isEqualTo(CANCELLATION_ID);
+            assertThat(note.cancellationNumber()).isEqualTo("CNCL-2026-0003");
         });
         server.verify();
     }
@@ -350,6 +410,124 @@ class PolicyCreditNoteClientTest {
                         assertThat(issue.field()).isEqualTo("currency");
                         assertThat(issue.code()).isEqualTo("CURRENCY_MISMATCH");
                     });
+                });
+        server.verify();
+    }
+
+    @Test
+    void preservesAnInvalidCancellationLinkProblemFromTheExpert() {
+        RestClient.Builder builder = builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        PolicyClient client = new PolicyClient(builder, new ObjectMapper(), BASE);
+
+        server.expect(requestTo(NOTES + "?tenantId=" + TENANT))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(content().json("""
+                        {"cancellationId": "%s"}
+                        """.formatted(CANCELLATION_ID)))
+                .andRespond(withStatus(HttpStatus.BAD_REQUEST)
+                        .contentType(MediaType.APPLICATION_PROBLEM_JSON)
+                        .body("""
+                                {
+                                  "type": "https://errors.eia-open-insurance.example/policy/invalid-cancellation-link",
+                                  "title": "Invalid cancellation link",
+                                  "status": 400,
+                                  "detail": "A VOID cancellation cannot produce a credit note.",
+                                  "code": "INVALID_CANCELLATION_LINK",
+                                  "category": "VALIDATION",
+                                  "retryable": false,
+                                  "errors": [
+                                    {"field": "cancellationId", "code": "INVALID_CANCELLATION_LINK",
+                                     "message": "cancellation is not refundable"}
+                                  ]
+                                }
+                                """));
+
+        assertThatThrownBy(() -> client.createCreditNote(TENANT, POLICY_ID,
+                new CreateCreditNoteCommand(new BigDecimal("10.00"), "USD", "CANCELLATION",
+                        CANCELLATION_ID)))
+                .isInstanceOf(ApiException.class)
+                .satisfies(ex -> {
+                    ApiException api = (ApiException) ex;
+                    assertThat(api.status()).isEqualTo(HttpStatus.BAD_REQUEST);
+                    assertThat(api.code()).isEqualTo("INVALID_CANCELLATION_LINK");
+                    assertThat(api.details()).singleElement().satisfies(issue ->
+                            assertThat(issue.field()).isEqualTo("cancellationId"));
+                });
+        server.verify();
+    }
+
+    @Test
+    void preservesAMissingCancellationProblemFromTheExpert() {
+        RestClient.Builder builder = builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        PolicyClient client = new PolicyClient(builder, new ObjectMapper(), BASE);
+
+        server.expect(requestTo(NOTES + "?tenantId=" + TENANT))
+                .andExpect(method(HttpMethod.POST))
+                .andRespond(withStatus(HttpStatus.NOT_FOUND)
+                        .contentType(MediaType.APPLICATION_PROBLEM_JSON)
+                        .body("""
+                                {
+                                  "type": "https://errors.eia-open-insurance.example/policy/cancellation-not-found",
+                                  "title": "Cancellation not found",
+                                  "status": 404,
+                                  "detail": "Cancellation not found: %s",
+                                  "code": "CANCELLATION_NOT_FOUND",
+                                  "category": "NOT_FOUND",
+                                  "retryable": false
+                                }
+                                """.formatted(CANCELLATION_ID)));
+
+        assertThatThrownBy(() -> client.createCreditNote(TENANT, POLICY_ID,
+                new CreateCreditNoteCommand(new BigDecimal("10.00"), "USD", "CANCELLATION",
+                        CANCELLATION_ID)))
+                .isInstanceOf(ApiException.class)
+                .satisfies(ex -> {
+                    ApiException api = (ApiException) ex;
+                    assertThat(api.status()).isEqualTo(HttpStatus.NOT_FOUND);
+                    assertThat(api.code()).isEqualTo("CANCELLATION_NOT_FOUND");
+                    assertThat(api.getMessage()).contains(CANCELLATION_ID.toString());
+                });
+        server.verify();
+    }
+
+    @Test
+    void preservesAConflictingCancellationLinkFromTheExpert() {
+        RestClient.Builder builder = builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        PolicyClient client = new PolicyClient(builder, new ObjectMapper(), BASE);
+
+        server.expect(requestTo(NOTES + "?tenantId=" + TENANT))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(content().json("""
+                        {"cancellationId": "%s"}
+                        """.formatted(CANCELLATION_ID)))
+                .andRespond(withStatus(HttpStatus.CONFLICT)
+                        .contentType(MediaType.APPLICATION_PROBLEM_JSON)
+                        .body("""
+                                {
+                                  "type": "https://errors.eia-open-insurance.example/policy/credit-note-already-linked",
+                                  "title": "Credit note already linked",
+                                  "status": 409,
+                                  "detail": "Cancellation %s already has a credit note.",
+                                  "code": "CREDIT_NOTE_ALREADY_LINKED",
+                                  "category": "CONFLICT",
+                                  "retryable": false,
+                                  "meta": {"cancellationId": "%s"}
+                                }
+                                """.formatted(CANCELLATION_ID, CANCELLATION_ID)));
+
+        assertThatThrownBy(() -> client.createCreditNote(TENANT, POLICY_ID,
+                new CreateCreditNoteCommand(new BigDecimal("10.00"), "USD", "CANCELLATION",
+                        CANCELLATION_ID)))
+                .isInstanceOf(ApiException.class)
+                .satisfies(ex -> {
+                    ApiException api = (ApiException) ex;
+                    assertThat(api.status()).isEqualTo(HttpStatus.CONFLICT);
+                    assertThat(api.code()).isEqualTo("CREDIT_NOTE_ALREADY_LINKED");
+                    assertThat(api.meta())
+                            .containsEntry("cancellationId", CANCELLATION_ID.toString());
                 });
         server.verify();
     }
@@ -510,6 +688,26 @@ class PolicyCreditNoteClientTest {
                   "createdAt": "2026-10-20T18:00:00Z"
                 }
                 """.formatted(CREDIT_NOTE_ID, TENANT, POLICY_ID);
+    }
+
+    private static String cancellationCreditNoteJson() {
+        return """
+                {
+                  "id": "%s",
+                  "tenantId": "%s",
+                  "noteNumber": "CN-2026-0007",
+                  "policyId": "%s",
+                  "amount": "1250.5000",
+                  "currency": "USD",
+                  "reason": "CANCELLATION",
+                  "status": "DRAFT",
+                  "issuedAt": null,
+                  "appliedAt": null,
+                  "createdAt": "2026-10-20T18:00:00Z",
+                  "cancellationId": "%s",
+                  "cancellationNumber": "CNCL-2026-0003"
+                }
+                """.formatted(CREDIT_NOTE_ID, TENANT, POLICY_ID, CANCELLATION_ID);
     }
 
     private static String appliedCreditNoteJson() {

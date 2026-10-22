@@ -133,13 +133,18 @@ unchanged.
 `GET /api/v1/policies/{policyId}/credit-notes` returns the policy's credit
 notes newest first as an array of the flat projection `{creditNoteId,
 noteNumber, policyId, amount, currency, reason, status, issuedAt, appliedAt,
-appliedInstallmentId, createdAt, reversedAt, reversalReason}`; `amount` is a
-scale-preserving decimal string and `appliedInstallmentId` names the
-installment an APPLIED or REVERSED note was credited against. `POST` requests a
-note from `{amount, currency, reason?}` and
-returns `201` with the stored projection; the note starts in the expert-owned
-`DRAFT` state, `currency` must match the policy premium currency, and `reason`
-is optional and capped at 500 characters. `PATCH
+appliedInstallmentId, createdAt, reversedAt, reversalReason, cancellationId,
+cancellationNumber}`; `amount` is a scale-preserving decimal string and
+`appliedInstallmentId` names the installment an APPLIED or REVERSED note was
+credited against. A cancellation-linked note also carries `cancellationId` and
+the expert's human-readable `cancellationNumber`; both are absent for every
+other note. `POST` requests a note from `{amount, currency, reason?,
+cancellationId?}` and returns `201` with the stored projection; the note starts
+in the expert-owned `DRAFT` state, `currency` must match the policy premium
+currency, and `reason` is optional and capped at 500 characters. The optional
+`cancellationId` links the note to the cancellation whose return premium it
+credits; the expert validates that the cancellation belongs to the
+tenant/policy and is eligible for a credit note. `PATCH
 /credit-notes/{creditNoteId}/status` accepts `{status, installmentId?,
 reason?}` and returns the updated projection, with `issuedAt` set on `ISSUED`,
 and `appliedAt` plus `appliedInstallmentId` set on `APPLIED`. `installmentId`
@@ -150,19 +155,19 @@ CANCELLED keep the unchanged `{status}` payload. `REVERSED` is reachable from
 for audit. The reason is forwarded only for `REVERSED`, and the reversal
 releases the credit from the applied installment, so billing and receivables
 keep their existing shape and their credited/outstanding amounts return to
-their pre-credit values. The expert owns the note
-number, the `DRAFT`/`ISSUED`/`APPLIED`/`CANCELLED`/`REVERSED` lifecycle, the
-approval gate, the transition rules, the same-tenant/policy open-installment
-credit rule, the reversal credit release, and the SAP credit-memo reference.
-The domain validates the request
-shape, forwards `X-EIA-Tenant` and `X-EIA-Book: DIRECT` on every call, and
-rejects a supplied non-DIRECT book with `404 BOOK_SCOPE_VIOLATION`. Expert
-`400`, `404`, and `409` problems reach the caller unchanged; a missing policy
-is `404 POLICY_NOT_FOUND`, a missing note is `404 CREDIT_NOTE_NOT_FOUND`, a
-missing or foreign installment is `404 INSTALLMENT_NOT_FOUND`, a missing
-reversal reason is `400 INVALID_CREDIT_NOTE_REASON`, and an
-out-of-order or terminal transition is `409
-INVALID_CREDIT_NOTE_TRANSITION`.
+their pre-credit values. The expert owns the note number, the
+`DRAFT`/`ISSUED`/`APPLIED`/`CANCELLED`/`REVERSED` lifecycle, the approval gate,
+the transition rules, the same-tenant/policy open-installment credit rule, the
+cancellation-link rules, the reversal credit release, and the SAP credit-memo
+reference. The domain validates the request shape, forwards `X-EIA-Tenant` and
+`X-EIA-Book: DIRECT` on every call, and rejects a supplied non-DIRECT book with
+`404 BOOK_SCOPE_VIOLATION`. Expert `400`, `404`, and `409` problems reach the
+caller unchanged; a missing policy is `404 POLICY_NOT_FOUND`, a missing note is
+`404 CREDIT_NOTE_NOT_FOUND`, a missing or foreign installment is `404
+INSTALLMENT_NOT_FOUND`, a missing reversal reason is `400
+INVALID_CREDIT_NOTE_REASON`, an out-of-order or terminal transition is `409
+INVALID_CREDIT_NOTE_TRANSITION`, and a missing or ineligible cancellation link
+keeps its expert `400`/`404`/`409` problem.
 
 ### Policy renewal
 

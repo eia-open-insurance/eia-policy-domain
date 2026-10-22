@@ -19,6 +19,8 @@ class PolicyCreditNoteServiceTest {
             UUID.fromString("eeeeeeee-eeee-7eee-8eee-eeeeeeeeeeee");
     private static final UUID INSTALLMENT_ID =
             UUID.fromString("bbbbbbbb-bbbb-7bbb-8bbb-bbbbbbbbbbbb");
+    private static final UUID CANCELLATION_ID =
+            UUID.fromString("cccccccc-cccc-7ccc-8ccc-cccccccccccc");
 
     private final PolicyClient client = mock(PolicyClient.class);
     private final PolicyCreditNoteService service = new PolicyCreditNoteService(client);
@@ -36,6 +38,17 @@ class PolicyCreditNoteServiceTest {
     void delegatesTheCreateToTheExpertClient() {
         CreateCreditNoteCommand command =
                 new CreateCreditNoteCommand(new BigDecimal("1250.50"), "USD", "CANCELLATION");
+        CreditNote note = note();
+        when(client.createCreditNote(TENANT, POLICY_ID, command)).thenReturn(note);
+
+        assertThat(service.create(TENANT, POLICY_ID, command)).isSameAs(note);
+        verify(client).createCreditNote(TENANT, POLICY_ID, command);
+    }
+
+    @Test
+    void delegatesTheCancellationLinkToTheExpertClient() {
+        CreateCreditNoteCommand command = new CreateCreditNoteCommand(
+                new BigDecimal("1250.50"), "USD", "CANCELLATION", CANCELLATION_ID);
         CreditNote note = note();
         when(client.createCreditNote(TENANT, POLICY_ID, command)).thenReturn(note);
 

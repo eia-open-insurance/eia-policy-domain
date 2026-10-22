@@ -37,6 +37,8 @@ class PolicyCreditNoteControllerTest {
             UUID.fromString("ffffffff-ffff-7fff-8fff-ffffffffffff");
     private static final UUID INSTALLMENT_ID =
             UUID.fromString("bbbbbbbb-bbbb-7bbb-8bbb-bbbbbbbbbbbb");
+    private static final UUID CANCELLATION_ID =
+            UUID.fromString("cccccccc-cccc-7ccc-8ccc-cccccccccccc");
     private static final String NOTES = "/api/v1/policies/{policyId}/credit-notes";
     private static final String NOTE_STATUS = NOTES + "/{creditNoteId}/status";
 
@@ -112,7 +114,37 @@ class PolicyCreditNoteControllerTest {
                 .andExpect(jsonPath("$.currency").value("USD"))
                 .andExpect(jsonPath("$.reason").value("CANCELLATION"))
                 .andExpect(jsonPath("$.status").value("DRAFT"))
-                .andExpect(jsonPath("$.createdAt").value("2026-10-20T18:00:00Z"));
+                .andExpect(jsonPath("$.createdAt").value("2026-10-20T18:00:00Z"))
+                .andExpect(jsonPath("$.cancellationId").value(nullValue()))
+                .andExpect(jsonPath("$.cancellationNumber").value(nullValue()));
+
+        verify(service).create(TENANT, POLICY_ID, command);
+    }
+
+    @Test
+    void requestsACancellationLinkedCreditNoteAndReturnsTheLink() throws Exception {
+        CreateCreditNoteCommand command = new CreateCreditNoteCommand(
+                new BigDecimal("1250.50"), "USD", "CANCELLATION", CANCELLATION_ID);
+        when(service.create(TENANT, POLICY_ID, command)).thenReturn(
+                new CreditNote(CREDIT_NOTE_ID, "CN-2026-0007", POLICY_ID,
+                        new BigDecimal("1250.5000"), "USD", "CANCELLATION", "DRAFT",
+                        null, null, null, Instant.parse("2026-10-20T18:00:00Z"),
+                        null, null, CANCELLATION_ID, "CNCL-2026-0003"));
+
+        mvc.perform(post(NOTES, POLICY_ID)
+                        .header("X-EIA-Tenant", TENANT.toString())
+                        .header("X-EIA-Book", "DIRECT")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"amount": 1250.50, "currency": "USD",
+                                 "reason": "CANCELLATION",
+                                 "cancellationId": "%s"}
+                                """.formatted(CANCELLATION_ID)))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.creditNoteId").value(CREDIT_NOTE_ID.toString()))
+                .andExpect(jsonPath("$.status").value("DRAFT"))
+                .andExpect(jsonPath("$.cancellationId").value(CANCELLATION_ID.toString()))
+                .andExpect(jsonPath("$.cancellationNumber").value("CNCL-2026-0003"));
 
         verify(service).create(TENANT, POLICY_ID, command);
     }
@@ -199,7 +231,8 @@ class PolicyCreditNoteControllerTest {
                         Instant.parse("2026-10-21T10:00:00Z"),
                         Instant.parse("2026-10-21T11:00:00Z"),
                         Instant.parse("2026-10-20T18:00:00Z"), INSTALLMENT_ID,
-                        Instant.parse("2026-10-22T08:00:00Z"), "REFUND_ISSUED"));
+                        Instant.parse("2026-10-22T08:00:00Z"), "REFUND_ISSUED",
+                        null, null));
 
         mvc.perform(patch(NOTE_STATUS, POLICY_ID, CREDIT_NOTE_ID)
                         .header("X-EIA-Tenant", TENANT.toString())

@@ -770,7 +770,7 @@ public class PolicyClient {
                 .toList();
     }
 
-    /** Requests one credit note against the policy. */
+    /** Requests one credit note against the policy, optionally linked to a cancellation. */
     public CreditNote createCreditNote(UUID tenantId, UUID policyId,
                                        CreateCreditNoteCommand command) {
         ExpertCreditNote view = call("create credit note", () -> client.post()
@@ -823,8 +823,9 @@ public class PolicyClient {
         }
         return new CreditNote(view.creditNoteId(), view.noteNumber(), view.policyId(),
                 view.amount(), view.currency(), view.reason(), view.status(),
-                view.issuedAt(), view.appliedAt(), view.createdAt(),
-                view.appliedInstallmentId(), view.reversedAt(), view.reversalReason());
+                view.issuedAt(), view.appliedAt(), view.appliedInstallmentId(), view.createdAt(),
+                view.reversedAt(), view.reversalReason(), view.cancellationId(),
+                view.cancellationNumber());
     }
 
     /**
@@ -1291,7 +1292,8 @@ public class PolicyClient {
      * aliases accept the expert's {@code id} identity and the SPEC column names
      * while the internal expert contract settles. A reversed note keeps its
      * application timestamps and installment and adds the reversal stamp and
-     * reason.
+     * reason. A cancellation-linked note carries the cancellation id and its
+     * human-readable number; both are absent for every other note.
      */
     @JsonIgnoreProperties(ignoreUnknown = true)
     record ExpertCreditNote(
@@ -1307,7 +1309,9 @@ public class PolicyClient {
             @JsonAlias("created_at") Instant createdAt,
             @JsonAlias({"applied_installment_id", "installmentId"}) UUID appliedInstallmentId,
             @JsonAlias("reversed_at") Instant reversedAt,
-            @JsonAlias("reversal_reason") String reversalReason
+            @JsonAlias("reversal_reason") String reversalReason,
+            @JsonAlias("cancellation_id") UUID cancellationId,
+            @JsonAlias("cancellation_number") String cancellationNumber
     ) {
     }
 

@@ -22,6 +22,12 @@ import java.util.UUID;
  * {@code reversalReason} written by the reversal. {@code createdAt} is
  * the request timestamp. {@code reason} is optional and capped by the
  * expert.</p>
+ *
+ * <p>{@code cancellationId} links the note to the cancellation whose return
+ * premium it credits and is absent when the note was raised for an endorsement,
+ * audit, or another adjustment. {@code cancellationNumber} is the expert's
+ * human-readable cancellation reference for a linked note and is absent
+ * otherwise.</p>
  */
 public record CreditNote(
         UUID creditNoteId,
@@ -36,14 +42,16 @@ public record CreditNote(
         Instant createdAt,
         UUID appliedInstallmentId,
         Instant reversedAt,
-        String reversalReason
+        String reversalReason,
+        UUID cancellationId,
+        String cancellationNumber
 ) {
     /** Compatibility constructor for projections that predate credit application. */
     public CreditNote(UUID creditNoteId, String noteNumber, UUID policyId, BigDecimal amount,
                       String currency, String reason, String status, Instant issuedAt,
                       Instant appliedAt, Instant createdAt) {
         this(creditNoteId, noteNumber, policyId, amount, currency, reason, status, issuedAt,
-                appliedAt, createdAt, null, null, null);
+                appliedAt, createdAt, null, null, null, null, null);
     }
 
     /** Compatibility constructor for projections that predate credit-note reversal. */
@@ -51,7 +59,7 @@ public record CreditNote(
                       String currency, String reason, String status, Instant issuedAt,
                       Instant appliedAt, Instant createdAt, UUID appliedInstallmentId) {
         this(creditNoteId, noteNumber, policyId, amount, currency, reason, status, issuedAt,
-                appliedAt, createdAt, appliedInstallmentId, null, null);
+                appliedAt, createdAt, appliedInstallmentId, null, null, null, null);
     }
 
     /**
@@ -62,7 +70,7 @@ public record CreditNote(
                       String currency, String reason, String status, Instant issuedAt,
                       Instant appliedAt, UUID appliedInstallmentId, Instant createdAt) {
         this(creditNoteId, noteNumber, policyId, amount, currency, reason, status, issuedAt,
-                appliedAt, createdAt, appliedInstallmentId, null, null);
+                appliedAt, createdAt, appliedInstallmentId, null, null, null, null);
     }
 
     /**
@@ -74,6 +82,21 @@ public record CreditNote(
                       Instant appliedAt, UUID appliedInstallmentId, Instant createdAt,
                       Instant reversedAt, String reversalReason) {
         this(creditNoteId, noteNumber, policyId, amount, currency, reason, status, issuedAt,
-                appliedAt, createdAt, appliedInstallmentId, reversedAt, reversalReason);
+                appliedAt, createdAt, appliedInstallmentId, reversedAt, reversalReason,
+                null, null);
+    }
+
+    /**
+     * Convenience constructor with the full expert order and the cancellation
+     * link appended after the reversal facts.
+     */
+    public CreditNote(UUID creditNoteId, String noteNumber, UUID policyId, BigDecimal amount,
+                      String currency, String reason, String status, Instant issuedAt,
+                      Instant appliedAt, UUID appliedInstallmentId, Instant createdAt,
+                      Instant reversedAt, String reversalReason, UUID cancellationId,
+                      String cancellationNumber) {
+        this(creditNoteId, noteNumber, policyId, amount, currency, reason, status, issuedAt,
+                appliedAt, createdAt, appliedInstallmentId, reversedAt, reversalReason,
+                cancellationId, cancellationNumber);
     }
 }
