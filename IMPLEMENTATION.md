@@ -7,7 +7,9 @@ validation, create/status orchestration, and the public problem envelope. The
 second slice adds pass-through routes for versions, coverage and limits,
 aggregate erosion, endorsements, insureds and locations, cancellation,
 reinstatement, and renewal into a successor term. Billing adds the plan and
-installment schedule projection under the same tenant and DIRECT-book context.
+installment schedule projection under the same tenant and DIRECT-book context,
+and appends a positive premium adjustment installment when the policy premium
+overtakes the ACTIVE plan total.
 The premium-audit route applies an audited premium and returns the updated
 policy plus the audit row.
 A cross-policy premium-receivable read projects installments as receivables for
@@ -26,7 +28,7 @@ utilization.
 |---|---|
 | `PolicyController` / `PolicyService` | First-slice public routes and lifecycle |
 | `PolicyContractController` / `PolicyContractService` | Second-slice public routes, renewal, page link rebuild, header validation |
-| `PolicyBillingController` / `PolicyBillingService` | Billing plan and installment routes; DIRECT-book guard |
+| `PolicyBillingController` / `PolicyBillingService` | Billing plan, installment, and positive adjustment routes; DIRECT-book guard |
 | `PolicyPremiumAuditController` / `PolicyPremiumAuditService` | Policy `POST .../premium-audit`; DIRECT-book guard, `If-Match` and idempotency validation |
 | `PolicyMassTortProfileController` / `PolicyMassTortProfileService` | Mass tort profile read/replace route; DIRECT-book guard |
 | `ReceivableController` / `ReceivableService` | Cross-policy `GET /api/v1/billing/installments`; status/limit normalization |
@@ -38,6 +40,8 @@ utilization.
 | `ProgramDto` | Public program projection with the optional capacity limit and expert-derived aggregates |
 | `CreateProgramCommand` | Program create body; shape validation and the optional capacity pair |
 | `BillingPlan`, `BillingSummary`, `Installment` | Public billing projections and their credited/outstanding totals |
+| `BillingAdjustmentCommand` | Positive premium adjustment body; shape validation only |
+| `BillingAdjustmentResult` | Public `{plan, installment, adjustmentAmount, newTotalPremium}` envelope |
 | `PremiumAuditResult` | Public envelope used when the expert returns the updated policy and an audit row |
 | `PremiumAuditDto` | Audit-row projection used by that envelope |
 | `ApplyPremiumAuditCommand` | Premium-audit request body; shape validation only |
@@ -73,6 +77,21 @@ publishes a summary, merging the expert values and deriving what an older
 expert omits from the plan total and installment rows. The expert owns the
 schedule, the split, the credit application, and the payment/waiver rules; this
 repository contains the domain adapter only.
+
+`POST /internal/v1/policies/{policyId}/billing/adjustment` forwards
+`{dueDate, reason}` together with `X-EIA-Tenant`, `X-EIA-Book: DIRECT`, the
+optional `If-Match`, and the optional `Idempotency-Key` and returns
+`{plan, installment, adjustmentAmount, newTotalPremium}`. The expert derives the
+adjustment amount as the policy written premium less the ACTIVE plan total,
+appends one DUE installment, and moves the plan total/count by the same amount;
+the public envelope projects the plan into the flat `BillingPlan` shape without
+repeating the schedule and the appended row into `Installment`. A fresh command
+is `201`; an expert replay is `200` with `Idempotent-Replayed: true`. A
+non-positive remainder is a preserved `400 NO_PREMIUM_ADJUSTMENT`, a missing
+plan is `404 BILLING_PLAN_NOT_FOUND`, and a non-ACTIVE or full schedule is a
+preserved `409 BILLING_PLAN_NOT_ACTIVE` / `409 MAX_INSTALLMENTS_REACHED`. The
+expert side of this contract lives in `eia-policy-expert`; this repository
+contains the domain adapter only.
 
 ## Premium-receivable expert contract
 
@@ -255,11 +274,17 @@ $env:JAVA_HOME='C:\Program Files\Eclipse Adoptium\jdk-22.0.2.9-hotspot'
 `PolicyContractControllerTest` covers every new route, `PolicyContractServiceTest`
 covers page-link rebuilding and header validation, and `PolicyClientTest` covers
 header forwarding and expert problem translation. `PolicyBillingControllerTest`
-covers the three billing routes, validation, tenant/book handling, and problem
-propagation; `PolicyBillingClientTest` uses `MockRestServiceServer` for the
+covers the billing plan, installment, and positive adjustment routes,
+validation, tenant/book handling, and problem propagation;
+`PolicyBillingClientTest` uses `MockRestServiceServer` for the
 forwarded tenant/book headers, payloads, the installment list and its
 credited/outstanding amounts, the summary mapping and derivation, and
-preserved `400`/`404`/`409` problems. `PolicyRenewalClientTest` uses
+preserved `400`/`404`/`409` problems. `PolicyBillingAdjustmentClientTest` uses
+`MockRestServiceServer` for the adjustment payload, tenant/DIRECT context, the
+optional `If-Match` and `Idempotency-Key`, the envelope mapping, the derived
+new total, the replay marker, and preserved `400`/`404`/`409` problems;
+`PolicyBillingAdjustmentServiceTest` covers header validation, idempotency
+normalization, and client delegation. `PolicyRenewalClientTest` uses
 `MockRestServiceServer` for the renewal tenant/book headers, new-term payload,
 successor policy and `renewedFromPolicyId` response, and preserved
 `400`/`404`/`409` problems. `PolicyReceivableClientTest` uses

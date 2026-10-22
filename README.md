@@ -48,6 +48,7 @@ All additive under `/api/v1/policies/{policyId}`:
 | `POST` | `/premium-audit` | Apply an audited premium; returns the policy and audit |
 | `GET`/`POST` | `/billing` | Billing plan and installments / create the plan |
 | `PATCH` | `/billing/installments/{installmentId}` | Record an installment's payment state |
+| `POST` | `/billing/adjustment` | Append a positive premium adjustment installment |
 | `GET`/`POST` | `/credit-notes` | Credit note list / request a credit note |
 | `PATCH` | `/credit-notes/{creditNoteId}/status` | Advance a credit note's status |
 
@@ -80,6 +81,20 @@ billing call, and maps the expert's `{plan, installments, summary}` view to the
 flat public projection (deriving a coherent summary when an older expert omits
 it). A supplied non-DIRECT book is `404 BOOK_SCOPE_VIOLATION`, and expert `400`,
 `404`, and `409` problems reach the caller unchanged.
+
+`POST /billing/adjustment` accepts `{dueDate, reason}` and appends one
+installment for the positive remainder between the policy written premium and
+the ACTIVE plan total. The response is the
+`{plan, installment, adjustmentAmount, newTotalPremium}` envelope: the updated
+plan totals, the appended `Installment`, the derived adjustment amount, and the
+new plan total. A fresh command returns `201`; an expert replay returns `200`
+with `Idempotent-Replayed: true`. The domain forwards the tenant query scope,
+`X-EIA-Tenant`, `X-EIA-Book: DIRECT`, the optional `If-Match`, and the optional
+`Idempotency-Key`, echoes the expert `ETag`, and preserves expert `400`, `404`,
+and `409` problems (for example `NO_PREMIUM_ADJUSTMENT`,
+`BILLING_PLAN_NOT_FOUND`, `BILLING_PLAN_NOT_ACTIVE`, and
+`MAX_INSTALLMENTS_REACHED`). An absent book is accepted; a supplied non-DIRECT
+book is `404 BOOK_SCOPE_VIOLATION`.
 
 ### Premium audit
 
@@ -345,7 +360,8 @@ The service listens on port 8084. Every request requires `X-EIA-Tenant`.
 - `POST`/`GET /api/v1/legal-entities`, `GET /api/v1/legal-entities/{legalEntityId}`
 - `PATCH /api/v1/policies/{policyId}/legal-entity`
 - `POST /api/v1/policies/{id}/coverages`, `/erosion`, `/endorsements`,
-  `/insureds`, `/locations`, `/cancel`, `/reinstate`, `/renew`, `/billing`
+  `/insureds`, `/locations`, `/cancel`, `/reinstate`, `/renew`, `/billing`,
+  `/billing/adjustment`
 - `PATCH /api/v1/policies/{id}/billing/installments/{installmentId}`
 - `GET /api/v1/billing/installments?status=&dueBefore=&limit=`
 - `GET`/`POST /api/v1/billing/installments/{installmentId}/dunning`

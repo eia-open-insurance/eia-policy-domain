@@ -7,11 +7,13 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 import static org.hamcrest.Matchers.hasItems;
@@ -24,6 +26,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -36,6 +39,9 @@ class PolicyBillingControllerTest {
     private static final UUID PAYMENT_ID = UUID.fromString("cccccccc-cccc-7ccc-8ccc-cccccccccccc");
     private static final String DIRECT = "DIRECT";
     private static final String BILLING = "/api/v1/policies/{policyId}/billing";
+    private static final String ADJUSTMENT = BILLING + "/adjustment";
+    private static final BillingAdjustmentCommand ADJUSTMENT_COMMAND =
+            new BillingAdjustmentCommand(LocalDate.of(2026, 5, 1), "exposure audit");
 
     @Autowired
     private MockMvc mvc;
@@ -259,6 +265,184 @@ class PolicyBillingControllerTest {
                 .andExpect(jsonPath("$.category").value("CONFLICT"))
                 .andExpect(jsonPath("$.errors[0].field").value("status"))
                 .andExpect(jsonPath("$.errors[0].code").value("INVALID_TRANSITION"));
+    }
+
+    @Test
+    void appendsTheAdjustmentAndReturnsTheEnvelope() throws Exception {
+        when(service.adjust(TENANT, POLICY_ID, ADJUSTMENT_COMMAND, "\"4\"", "adjust-key-1"))
+                .thenReturn(new Mutation<>(adjustmentResult(), "\"5\"", false));
+
+        mvc.perform(adjustmentRequest()
+                        .header("If-Match", "\"4\"")
+                        .header("Idempotency-Key", "adjust-key-1"))
+                .andExpect(status().isCreated())
+                .andExpect(header().string("ETag", "\"5\""))
+                .andExpect(header().string("Idempotent-Replayed", "false"))
+                .andExpect(jsonPath("$.plan.planId").value(PLAN_ID.toString()))
+                .andExpect(jsonPath("$.plan.planNumber").value("BP-2026-0001"))
+                .andExpect(jsonPath("$.plan.policyId").value(POLICY_ID.toString()))
+                .andExpect(jsonPath("$.plan.totalPremium").value("150000.0000"))
+                .andExpect(jsonPath("$.plan.currency").value("USD"))
+                .andExpect(jsonPath("$.plan.installmentCount").value(4))
+                .andExpect(jsonPath("$.plan.frequency").value("QUARTERLY"))
+                .andExpect(jsonPath("$.plan.firstDueDate").value("2026-01-15"))
+                .andExpect(jsonPath("$.plan.status").value("ACTIVE"))
+                .andExpect(jsonPath("$.installment.installmentId")
+                        .value(INSTALLMENT_ID.toString()))
+                .andExpect(jsonPath("$.installment.installmentNumber").value(4))
+                .andExpect(jsonPath("$.installment.dueDate").value("2026-05-01"))
+                .andExpect(jsonPath("$.installment.amount").value("30000.0000"))
+                .andExpect(jsonPath("$.installment.creditedAmount").value("0.0000"))
+                .andExpect(jsonPath("$.installment.outstandingAmount").value("30000.0000"))
+                .andExpect(jsonPath("$.installment.status").value("DUE"))
+                .andExpect(jsonPath("$.adjustmentAmount").value("30000.0000"))
+                .andExpect(jsonPath("$.newTotalPremium").value("150000.0000"));
+
+        verify(service).adjust(TENANT, POLICY_ID, ADJUSTMENT_COMMAND, "\"4\"", "adjust-key-1");
+    }
+
+    @Test
+    void returnsOkWhenTheExpertReplaysTheAdjustment() throws Exception {
+        when(service.adjust(TENANT, POLICY_ID, ADJUSTMENT_COMMAND, null, "adjust-key-1"))
+                .thenReturn(new Mutation<>(adjustmentResult(), "\"5\"", true));
+
+        mvc.perform(adjustmentRequest().header("Idempotency-Key", "adjust-key-1"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("ETag", "\"5\""))
+                .andExpect(header().string("Idempotent-Replayed", "true"))
+                .andExpect(jsonPath("$.adjustmentAmount").value("30000.0000"));
+
+        verify(service).adjust(TENANT, POLICY_ID, ADJUSTMENT_COMMAND, null, "adjust-key-1");
+    }
+
+    @Test
+    void acceptsAnAbsentBookForTheAdjustment() throws Exception {
+        when(service.adjust(TENANT, POLICY_ID, ADJUSTMENT_COMMAND, null, null))
+                .thenReturn(new Mutation<>(adjustmentResult(), null, false));
+
+        mvc.perform(post(ADJUSTMENT, POLICY_ID)
+                        .header("X-EIA-Tenant", TENANT.toString())
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"dueDate": "2026-05-01", "reason": "exposure audit"}
+                                """))
+                .andExpect(status().isCreated())
+                .andExpect(header().doesNotExist("ETag"))
+                .andExpect(jsonPath("$.plan.planNumber").value("BP-2026-0001"));
+    }
+
+    @Test
+    void rejectsAnyOtherBookForTheAdjustment() throws Exception {
+        mvc.perform(adjustmentRequest().header("X-EIA-Book", "ASSUMED"))
+                .andExpect(status().isNotFound())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.code").value("BOOK_SCOPE_VIOLATION"))
+                .andExpect(jsonPath("$.category").value("NOT_FOUND"));
+
+        verifyNoInteractions(service);
+    }
+
+    @Test
+    void validatesTheAdjustmentBody() throws Exception {
+        mvc.perform(post(ADJUSTMENT, POLICY_ID)
+                        .header("X-EIA-Tenant", TENANT.toString())
+                        .header("X-EIA-Book", DIRECT)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.errors[*].field", hasItems("dueDate", "reason")));
+
+        verifyNoInteractions(service);
+    }
+
+    @Test
+    void rejectsABlankAdjustmentReason() throws Exception {
+        mvc.perform(post(ADJUSTMENT, POLICY_ID)
+                        .header("X-EIA-Tenant", TENANT.toString())
+                        .header("X-EIA-Book", DIRECT)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"dueDate": "2026-05-01", "reason": "   "}
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.errors[*].field", hasItems("reason")));
+
+        verifyNoInteractions(service);
+    }
+
+    @Test
+    void preservesTheExpertNoPremiumAdjustmentProblem() throws Exception {
+        when(service.adjust(TENANT, POLICY_ID, ADJUSTMENT_COMMAND, null, null))
+                .thenThrow(new ApiException(HttpStatus.BAD_REQUEST, "NO_PREMIUM_ADJUSTMENT",
+                        "The policy premium does not exceed the billing plan total.",
+                        List.of(new ApiException.FieldIssue("delta", "NO_PREMIUM_ADJUSTMENT",
+                                "A premium decrease must use a credit note.")),
+                        Map.of("delta", "0.0000")));
+
+        mvc.perform(adjustmentRequest())
+                .andExpect(status().isBadRequest())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.code").value("NO_PREMIUM_ADJUSTMENT"))
+                .andExpect(jsonPath("$.category").value("VALIDATION"))
+                .andExpect(jsonPath("$.errors[0].field").value("delta"))
+                .andExpect(jsonPath("$.meta.delta").value("0.0000"));
+    }
+
+    @Test
+    void preservesTheMissingBillingPlanProblem() throws Exception {
+        when(service.adjust(TENANT, POLICY_ID, ADJUSTMENT_COMMAND, null, null))
+                .thenThrow(new ApiException(HttpStatus.NOT_FOUND, "BILLING_PLAN_NOT_FOUND",
+                        "No billing plan exists for policy " + POLICY_ID,
+                        List.of(new ApiException.FieldIssue("policyId", "BILLING_PLAN_NOT_FOUND",
+                                "No billing plan exists for policy " + POLICY_ID))));
+
+        mvc.perform(adjustmentRequest())
+                .andExpect(status().isNotFound())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.code").value("BILLING_PLAN_NOT_FOUND"))
+                .andExpect(jsonPath("$.category").value("NOT_FOUND"))
+                .andExpect(jsonPath("$.errors[0].field").value("policyId"));
+    }
+
+    @Test
+    void preservesTheInactivePlanConflictProblem() throws Exception {
+        when(service.adjust(TENANT, POLICY_ID, ADJUSTMENT_COMMAND, null, null))
+                .thenThrow(new ApiException(HttpStatus.CONFLICT, "BILLING_PLAN_NOT_ACTIVE",
+                        "Billing plan " + PLAN_ID + " is CANCELLED; only an ACTIVE plan can be adjusted.",
+                        List.of(new ApiException.FieldIssue("policyId", "BILLING_PLAN_NOT_ACTIVE",
+                                "Only an ACTIVE plan can be adjusted.")),
+                        Map.of("planId", PLAN_ID.toString(), "currentStatus", "CANCELLED")));
+
+        mvc.perform(adjustmentRequest())
+                .andExpect(status().isConflict())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_PROBLEM_JSON))
+                .andExpect(jsonPath("$.code").value("BILLING_PLAN_NOT_ACTIVE"))
+                .andExpect(jsonPath("$.category").value("CONFLICT"))
+                .andExpect(jsonPath("$.meta.currentStatus").value("CANCELLED"));
+    }
+
+    private static MockHttpServletRequestBuilder adjustmentRequest() {
+        return post(ADJUSTMENT, POLICY_ID)
+                .header("X-EIA-Tenant", TENANT.toString())
+                .header("X-EIA-Book", DIRECT)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""
+                        {"dueDate": "2026-05-01", "reason": "exposure audit"}
+                        """);
+    }
+
+    private static BillingAdjustmentResult adjustmentResult() {
+        BillingPlan plan = new BillingPlan(PLAN_ID, "BP-2026-0001", POLICY_ID,
+                new BigDecimal("150000.0000"), "USD", 4, "QUARTERLY",
+                LocalDate.of(2026, 1, 15), "ACTIVE", List.of());
+        Installment installment = new Installment(INSTALLMENT_ID, 4,
+                LocalDate.of(2026, 5, 1), new BigDecimal("30000.0000"),
+                new BigDecimal("0.0000"), new BigDecimal("30000.0000"), "DUE", null, null);
+        return new BillingAdjustmentResult(plan, installment, new BigDecimal("30000.0000"),
+                new BigDecimal("150000.0000"));
     }
 
     private static BillingPlan billingPlan() {

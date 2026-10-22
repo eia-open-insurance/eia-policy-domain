@@ -457,6 +457,43 @@ public class PolicyClient {
         return toInstallment(installment);
     }
 
+    /**
+     * Appends a positive premium adjustment installment. The expert derives the
+     * amount from the policy premium less the plan total and returns the updated
+     * plan, the appended installment, and the adjustment facts. The tenant and
+     * DIRECT book context travel on every call; the optional {@code If-Match}
+     * and {@code Idempotency-Key} headers are forwarded when supplied, and an
+     * expert replay marker is preserved on the mutation result.
+     */
+    public Mutation<BillingAdjustmentResult> adjustBillingPlan(
+            UUID tenantId, UUID policyId, BillingAdjustmentCommand command,
+            String ifMatch, String idempotencyKey) {
+        ResponseEntity<ExpertBillingAdjustmentView> response = callEntity(
+                "adjust billing plan", () -> {
+                    RestClient.RequestBodySpec spec = client.post()
+                            .uri(uri -> uri.path(
+                                            "/internal/v1/policies/{id}/billing/adjustment")
+                                    .queryParam("tenantId", tenantId)
+                                    .build(policyId))
+                            .header(TENANT_HEADER, tenantId.toString())
+                            .header(BookScope.BOOK_HEADER, BookScope.DIRECT);
+                    if (ifMatch != null && !ifMatch.isBlank()) {
+                        spec = spec.header(HttpHeaders.IF_MATCH, ifMatch);
+                    }
+                    if (idempotencyKey != null && !idempotencyKey.isBlank()) {
+                        spec = spec.header("Idempotency-Key", idempotencyKey);
+                    }
+                    return spec.body(command).retrieve()
+                            .toEntity(ExpertBillingAdjustmentView.class);
+                });
+        if (response.getBody() == null) {
+            throw new ApiException(HttpStatus.BAD_GATEWAY, "EXPERT_BAD_RESPONSE",
+                    "Policy expert returned an empty response");
+        }
+        return Mutation.of(new ResponseEntity<>(toBillingAdjustment(response.getBody()),
+                response.getHeaders(), response.getStatusCode()));
+    }
+
     // ------------------------------------------------------------------
     // Mass tort profile (SPEC 11.2.11). The expert owns the tort catalog,
     // the trigger and allocation vocabulary, the coverage-block period,
@@ -949,6 +986,29 @@ public class PolicyClient {
     }
 
     /**
+     * The adjustment response repeats the plan without its schedule: the updated
+     * plan totals travel under {@code plan}, the appended row travels separately
+     * under {@code installment}. The public plan projection keeps its flat shape
+     * and publishes no schedule rows for this envelope, so the plan totals stay
+     * authoritative without inventing a partial installment list.
+     */
+    private static BillingAdjustmentResult toBillingAdjustment(
+            ExpertBillingAdjustmentView view) {
+        if (view == null || view.plan() == null || view.installment() == null) {
+            throw new ApiException(HttpStatus.BAD_GATEWAY, "EXPERT_BAD_RESPONSE",
+                    "Policy expert returned an empty response");
+        }
+        ExpertBillingPlan plan = view.plan();
+        BillingPlan projectedPlan = new BillingPlan(plan.id(), plan.planNumber(),
+                plan.policyId(), plan.totalPremium(), plan.currency(), plan.installmentCount(),
+                plan.frequency(), plan.firstDueDate(), plan.status(), List.of(), null);
+        BigDecimal newTotalPremium = view.newTotalPremium() == null
+                ? plan.totalPremium() : view.newTotalPremium();
+        return new BillingAdjustmentResult(projectedPlan, toInstallment(view.installment()),
+                view.adjustmentAmount(), newTotalPremium);
+    }
+
+    /**
      * Merges the expert summary with the derived one. An older expert that only
      * returns the plan and installments still gets a complete summary, while a
      * supplied total/paid/credited/outstanding value wins over the derivation.
@@ -1227,6 +1287,20 @@ public class PolicyClient {
     @JsonIgnoreProperties(ignoreUnknown = true)
     record ExpertBillingPlanView(ExpertBillingPlan plan, List<ExpertInstallment> installments,
                                  ExpertBillingSummary summary) {
+    }
+
+    /**
+     * Wire shape of the expert positive-adjustment view: the updated plan, the
+     * appended installment, the derived adjustment amount, and the resulting
+     * plan total.
+     */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record ExpertBillingAdjustmentView(
+            ExpertBillingPlan plan,
+            ExpertInstallment installment,
+            BigDecimal adjustmentAmount,
+            BigDecimal newTotalPremium
+    ) {
     }
 
     /**

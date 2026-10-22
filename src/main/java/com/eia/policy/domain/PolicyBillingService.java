@@ -28,4 +28,18 @@ public class PolicyBillingService {
                                          UpdateInstallmentCommand command) {
         return client.updateInstallment(tenantId, policyId, installmentId, command);
     }
+
+    /**
+     * Appends a positive premium adjustment installment. The expert owns the
+     * premium remainder, the schedule window, and the plan-total movement; the
+     * domain validates the optional {@code If-Match} tag and normalizes the
+     * idempotency key before forwarding the command.
+     */
+    public Mutation<BillingAdjustmentResult> adjust(UUID tenantId, UUID policyId,
+                                                    BillingAdjustmentCommand command,
+                                                    String ifMatch, String idempotencyKey) {
+        EntityTags.parse(ifMatch);
+        return client.adjustBillingPlan(tenantId, policyId, command, ifMatch,
+                IdempotencyKeys.normalize(idempotencyKey));
+    }
 }

@@ -43,6 +43,15 @@ The format is based on Keep a Changelog and the project uses Semantic Versioning
   /billing/installments/{installmentId}` records `{status, paymentId?}` and
   returns the updated installment. The tenant and `X-EIA-Book: DIRECT` are
   forwarded to the expert, and expert `400`/`404`/`409` problems are preserved.
+- `POST /api/v1/policies/{policyId}/billing/adjustment` appends one positive
+  premium adjustment installment from `{dueDate, reason}` and returns the
+  `{plan, installment, adjustmentAmount, newTotalPremium}` envelope. The expert
+  derives the amount as the policy written premium less the ACTIVE plan total;
+  a fresh command is `201`, an expert replay is `200` with
+  `Idempotent-Replayed: true`. The tenant query, `X-EIA-Tenant`,
+  `X-EIA-Book: DIRECT`, the optional `If-Match`, and the optional
+  `Idempotency-Key` are forwarded, the expert `ETag` is echoed, and expert
+  `400`/`404`/`409` problems are preserved.
 - `POST /api/v1/policies/{policyId}/renew` renews a policy into a successor
   term from `{effectiveDate, expirationDate, premiumAmount?, premiumCurrency?,
   limitAmount?, limitCurrency?}`. The successor `PolicyDto` exposes
