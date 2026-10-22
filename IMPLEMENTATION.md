@@ -13,9 +13,10 @@ overtakes the ACTIVE plan total.
 The premium-audit route applies an audited premium and returns the updated
 policy plus the audit row.
 The underwriting-submission slice proxies intake, status transitions, the
-structured referral and its decision, and conversion of one submission into a
-policy, returning the updated or converted submission and, for conversion, the
-created policy.
+structured referral and its decision, the append-only referral history, and
+conversion of one submission into a policy, returning the updated or converted
+submission, the historical referral rounds, and, for conversion, the created
+policy.
 A cross-policy premium-receivable read projects installments as receivables for
 the collections/ageing view, the installment dunning route records and reads the
 collections actions, the credit-note route requests, lists, advances, and reverses
@@ -46,8 +47,9 @@ policies and underwriting submissions reference by product code.
 | `UpdateProductStatusCommand` | Product status body; shape validation only |
 | `PolicyLegalEntityController` / `PolicyLegalEntityService` | Policy issuer `PATCH` route; DIRECT-book guard |
 | `ProgramController` / `ProgramService` | Program `POST`/`GET` catalog routes; date and capacity-pair validation; DIRECT-book guard |
-| `SubmissionController` / `SubmissionService` | Underwriting submission list/read/create/status/referral/decision/convert routes; DIRECT-book guard and idempotency normalization |
+| `SubmissionController` / `SubmissionService` | Underwriting submission list/read/create/status/referral/decision/history/convert routes; DIRECT-book guard and idempotency normalization |
 | `SubmissionDto` | Public underwriting submission projection with the canonical applicant, product, requested-limit, tort-code, notes, and timestamp members plus the optional converted-policy link and structured referral fields |
+| `ReferralDto` | Flat public projection of one referral review round from the submission's append-only history |
 | `CreateSubmissionCommand` | Submission create body; applicant/product/requested-term/limit requirements and optional tort codes and notes |
 | `UpdateSubmissionStatusCommand` | Submission status body; shape validation only |
 | `ReferSubmissionCommand` | Structured-referral body; required reason, authority, and assignee plus optional notes |
@@ -371,6 +373,35 @@ the expert's snake-case column aliases during rollout and omits the members
 until a referral is opened. The expert side of this contract lives in
 `eia-policy-expert`; this repository contains the domain adapter only.
 
+## Submission referral history expert contract
+
+`GET /api/v1/policies/submissions/{submissionId}/referrals` returns the
+submission's referral review rounds as an array, newest first. The domain calls
+`GET /internal/v1/policies/submissions/{submissionId}/referrals` with
+`X-EIA-Tenant`, `X-EIA-Book: DIRECT`, and the `tenantId` query scope, and
+publishes a bare array even when an expert envelope uses `items` or `referrals`.
+The expert owns the append-only history: every accepted refer command inserts a
+round with `decision=PENDING`, and the decision command closes the newest
+pending round with the decider and instant, so a review that went through
+several rounds is reconstructable. The expert also owns the newest-first order
+(`created_at DESC, id DESC`) and resolves the parent submission first, so an
+unknown or another tenant's submission is `404 SUBMISSION_NOT_FOUND` even when
+it has no history rows.
+
+The public `ReferralDto` is the flat
+`{referralId, submissionId, reason, authority, referredTo, notes, decision,
+decidedBy, decidedAt, createdAt}` projection. `notes` is the referral narrative
+when the round is opened; a non-blank decision note replaces it, matching the
+submission projection's `referral_notes` column. `decidedBy` and `decidedAt`
+are null while the round is `PENDING`. The domain accepts the expert's canonical
+camel-case view and the snake-case aliases (`id`/`referral_id`,
+`submission_id`, `referral_reason`, `required_authority`, `assigned_to`,
+`comments`, `referral_decision`, `decided_by`, `decided_at`, `created_at`)
+during rollout, fills `submissionId` from the scoped path when a row omits it,
+and treats a missing row identity or a malformed collection as `502
+EXPERT_BAD_RESPONSE`. The expert side of this contract lives in
+`eia-policy-expert`; this repository contains the domain adapter only.
+
 ## Submission conversion expert contract
 
 `POST /api/v1/policies/submissions/{submissionId}/convert` converts one
@@ -493,7 +524,15 @@ aliases, and preserved `400`/`404`/`409` problems; `SubmissionReferralController
 covers both routes, the updated projection and ETag fallback, body validation
 and caps, tenant/book handling, the absent replay marker, and problem
 propagation, and `SubmissionReferralServiceTest` covers delegation and
-idempotency normalization. `SubmissionControllerTest` covers the
+idempotency normalization. `SubmissionReferralHistoryClientTest` uses
+`MockRestServiceServer` for the history tenant/DIRECT headers, the bare-array
+and `{items}`/`{referrals}` list shapes, the canonical and SPEC-column alias
+mapping, the empty history, the `submissionId` fallback, the pending-round null
+decision fields, the malformed/empty `EXPERT_BAD_RESPONSE` boundaries, and a
+preserved `404`; `SubmissionReferralHistoryControllerTest` covers the array
+response, the empty array, tenant/book handling, and problem propagation, and
+`SubmissionReferralHistoryServiceTest` covers delegation, the empty history, and
+the expert-not-found propagation. `SubmissionControllerTest` covers the
 list/read/create/status/convert routes, the canonical projection, ETag
 derivation and echo, `201`/`200` selection, the expert create caps, tenant/book
 handling, and problem propagation, and `SubmissionServiceTest` covers delegation
@@ -524,6 +563,7 @@ normalization, and `If-Match`/key rejection before the expert call.
 - The domain does not proxy occurrences, claims, reinsurance, billing accounts,
   billing instructions, disputes, commission statements, producer payables, or
   lineage projections (SPEC 11.2.10/11.2.13) yet. Underwriting submissions are
-  proxied as intake, status transitions, the structured referral and its
-  decision, and conversion to a policy; clearance, rating worksheets, producer
-  licensing, and authority evaluation are not modelled or orchestrated here.
+  proxied as intake, status transitions, the structured referral, its decision,
+  and its append-only history, plus conversion to a policy; clearance, rating
+  worksheets, producer licensing, and authority evaluation are not modelled or
+  orchestrated here.

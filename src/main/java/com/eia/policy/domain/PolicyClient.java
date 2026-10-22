@@ -970,6 +970,30 @@ public class PolicyClient {
     }
 
     /**
+     * Reads the submission's referral history, newest first, as the expert
+     * publishes it. The expert resolves the parent submission first, so an
+     * unknown or cross-tenant id is a {@code 404} even when there is no history
+     * row. The collection accepts the expert's bare array plus the
+     * {@code {items, ...}} and {@code {referrals, ...}} envelopes used during
+     * rollout; the public projection is always a bare array.
+     */
+    public List<ReferralDto> findSubmissionReferrals(UUID tenantId, UUID submissionId) {
+        JsonNode body = call("list underwriting submission referrals", () -> client.get()
+                .uri(uri -> uri.path(
+                                "/internal/v1/policies/submissions/{submissionId}/referrals")
+                        .queryParam("tenantId", tenantId)
+                        .build(submissionId))
+                .header(TENANT_HEADER, tenantId.toString())
+                .header(BookScope.BOOK_HEADER, BookScope.DIRECT)
+                .retrieve()
+                .body(JsonNode.class));
+        return referralItems(body).stream()
+                .filter(Objects::nonNull)
+                .map(view -> toReferral(view, submissionId))
+                .toList();
+    }
+
+    /**
      * Creates one submission. A fresh command is {@code 201}; an expert replay
      * of the same tenant-scoped {@code Idempotency-Key} is {@code 200} with the
      * replay marker and the original submission.
@@ -1168,6 +1192,39 @@ public class PolicyClient {
     }
 
     /**
+     * Accepts the three history shapes an expert may return during rollout: a
+     * bare array, or an envelope whose {@code items} (or {@code referrals})
+     * member carries the array. Anything else is an expert-boundary failure.
+     */
+    private List<ExpertReferral> referralItems(JsonNode body) {
+        if (body == null || body.isNull()) {
+            throw badExpertResponse();
+        }
+        JsonNode items = body;
+        if (body.isObject()) {
+            items = body.get("items");
+            if (items == null || items.isNull()) {
+                items = body.get("referrals");
+            }
+        }
+        if (items == null || !items.isArray()) {
+            throw badExpertResponse();
+        }
+        List<ExpertReferral> views = new ArrayList<>();
+        for (JsonNode item : items) {
+            if (item == null || item.isNull()) {
+                continue;
+            }
+            try {
+                views.add(objectMapper.treeToValue(item, ExpertReferral.class));
+            } catch (JsonProcessingException | IllegalArgumentException ex) {
+                throw badExpertResponse();
+            }
+        }
+        return views;
+    }
+
+    /**
      * Accepts the two single-submission shapes an expert may return: the bare
      * canonical row, or an envelope whose {@code submission} member carries it.
      */
@@ -1293,6 +1350,23 @@ public class PolicyClient {
     private static ApiException badExpertResponse() {
         return new ApiException(HttpStatus.BAD_GATEWAY, "EXPERT_BAD_RESPONSE",
                 "Policy expert returned an empty response");
+    }
+
+    /**
+     * Projects one expert referral history row. The row identity is required,
+     * while the parent submission id falls back to the scoped path so the
+     * projection is always addressable. {@code notes}, {@code decidedBy}, and
+     * {@code decidedAt} stay null while a round is pending.
+     */
+    private static ReferralDto toReferral(ExpertReferral view, UUID submissionId) {
+        if (view == null || view.referralId() == null) {
+            throw badExpertResponse();
+        }
+        UUID projectedSubmissionId =
+                view.submissionId() == null ? submissionId : view.submissionId();
+        return new ReferralDto(view.referralId(), projectedSubmissionId, view.reason(),
+                view.authority(), view.referredTo(), view.notes(), view.decision(),
+                view.decidedBy(), view.decidedAt(), view.createdAt());
     }
 
     // ------------------------------------------------------------------
@@ -2161,6 +2235,27 @@ public class PolicyClient {
             String referralDecidedBy,
             @JsonAlias({"referral_decided_at", "decidedAt", "decided_at"})
             Instant referralDecidedAt
+    ) {
+    }
+
+    /**
+     * Wire shape of one expert referral history row. The canonical expert view
+     * already uses these names; the aliases accept the SPEC column names and
+     * the {@code id} identity during rollout.
+     */
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    record ExpertReferral(
+            @JsonAlias({"id", "referral_id"}) UUID referralId,
+            @JsonAlias("submission_id") UUID submissionId,
+            @JsonAlias({"referral_reason", "reason_code"}) String reason,
+            @JsonAlias({"referral_authority", "required_authority", "requiredAuthority"})
+            String authority,
+            @JsonAlias({"assigned_to", "assignedTo"}) String referredTo,
+            @JsonAlias({"referral_notes", "comments"}) String notes,
+            @JsonAlias({"referral_decision", "status"}) String decision,
+            @JsonAlias({"referral_decided_by", "decided_by"}) String decidedBy,
+            @JsonAlias({"referral_decided_at", "decided_at"}) Instant decidedAt,
+            @JsonAlias("created_at") Instant createdAt
     ) {
     }
 

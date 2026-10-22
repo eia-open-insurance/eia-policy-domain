@@ -65,6 +65,7 @@ Underwriting submissions are a top-level DIRECT-book collection:
 | `PATCH` | `/api/v1/policies/submissions/{submissionId}/status` | Advance the status |
 | `POST` | `/api/v1/policies/submissions/{submissionId}/referral` | Open or replace the structured referral |
 | `POST` | `/api/v1/policies/submissions/{submissionId}/referral/decision` | Decide the pending referral |
+| `GET` | `/api/v1/policies/submissions/{submissionId}/referrals` | Referral history |
 | `POST` | `/api/v1/policies/submissions/{submissionId}/convert` | Convert the submission to a policy |
 
 ### Billing plan
@@ -215,6 +216,19 @@ referral command is published with `Idempotent-Replayed: false` unless the
 expert supplies an explicit replay marker, and expert `400`, `404`, and `409`
 problems (including a non-referrable submission or a non-pending referral) are
 preserved unchanged.
+
+`GET /api/v1/policies/submissions/{submissionId}/referrals` returns the
+submission's referral history as an array of `{referralId, submissionId,
+reason, authority, referredTo, notes, decision, decidedBy, decidedAt,
+createdAt}`, newest first, and an empty array when no referral has been opened.
+The expert appends one review round per accepted referral command and closes the
+newest pending round on a decision, so several rounds are reconstructable.
+`notes` is the referral narrative (or the non-blank decision note that replaced
+it), and `decidedBy`/`decidedAt` are null while a round is `PENDING`. The domain
+forwards the tenant query, `X-EIA-Tenant`, and `X-EIA-Book: DIRECT`; an absent
+book is accepted, a supplied non-DIRECT book is `404 BOOK_SCOPE_VIOLATION`, and
+expert `400`/`404` problems (including an unknown or another tenant's
+submission) reach the caller unchanged.
 
 ### Premium receivables
 
@@ -497,6 +511,7 @@ The service listens on port 8084. Every request requires `X-EIA-Tenant`.
   `PATCH /api/v1/policies/submissions/{submissionId}/status`,
   `POST /api/v1/policies/submissions/{submissionId}/referral`,
   `POST /api/v1/policies/submissions/{submissionId}/referral/decision`,
+  `GET /api/v1/policies/submissions/{submissionId}/referrals`,
   `POST /api/v1/policies/submissions/{submissionId}/convert`
 - `PATCH /api/v1/policies/{id}/billing/installments/{installmentId}`
 - `GET /api/v1/billing/installments?status=&dueBefore=&limit=`

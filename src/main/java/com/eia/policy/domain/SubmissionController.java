@@ -29,12 +29,14 @@ import java.util.UUID;
  * creates one submission and returns {@code 201} (or {@code 200} for an expert
  * idempotent replay) with the stored projection. {@code PATCH .../{submissionId}/status}
  * advances the submission through the expert-owned lifecycle and returns the
- * updated projection. {@code POST .../{submissionId}/referral} opens or
- * replaces the structured referral, and {@code POST
- * .../{submissionId}/referral/decision} decides it; both return the updated
- * projection. {@code POST .../{submissionId}/convert} turns one submission into
- * a policy and returns the {@code {submission, policy}} envelope, {@code 201}
- * for a fresh conversion (or {@code 200} for an expert idempotent replay).</p>
+ * updated projection. {@code GET .../{submissionId}/referrals} returns the
+ * submission's referral history, newest first. {@code POST
+ * .../{submissionId}/referral} opens or replaces the structured referral, and
+ * {@code POST .../{submissionId}/referral/decision} decides it; both return the
+ * updated projection. {@code POST .../{submissionId}/convert} turns one
+ * submission into a policy and returns the {@code {submission, policy}}
+ * envelope, {@code 201} for a fresh conversion (or {@code 200} for an expert
+ * idempotent replay).</p>
  */
 @RestController
 @RequestMapping("/api/v1/policies/submissions")
@@ -71,6 +73,25 @@ public class SubmissionController {
             response = response.eTag(etag);
         }
         return response.body(submission);
+    }
+
+    /**
+     * Returns the submission's referral history, newest first, as the expert
+     * publishes it. Each round carries the reason, authority, assignee, notes,
+     * decision, decider, and decision instant; a pending round leaves the
+     * decision fields null. The expert resolves the parent submission first, so
+     * an unknown or another tenant's id is {@code 404 SUBMISSION_NOT_FOUND}.
+     * The tenant and DIRECT book are forwarded and a supplied non-DIRECT book
+     * is {@code 404 BOOK_SCOPE_VIOLATION}; expert {@code 400}/{@code 404}
+     * problems are preserved unchanged.
+     */
+    @GetMapping("/{submissionId}/referrals")
+    public List<ReferralDto> listReferrals(
+            @RequestHeader(TENANT_HEADER) UUID tenantId,
+            @RequestHeader(value = BookScope.BOOK_HEADER, required = false) String book,
+            @PathVariable UUID submissionId) {
+        BookScope.requireDirectWhenPresent(book);
+        return service.listReferrals(tenantId, submissionId);
     }
 
     @PostMapping

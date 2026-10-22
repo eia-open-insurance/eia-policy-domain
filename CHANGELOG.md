@@ -93,6 +93,17 @@ The format is based on Keep a Changelog and the project uses Semantic Versioning
   referralDecision, referralDecidedBy, referralDecidedAt}` members; opening a
   referral starts `referralDecision=PENDING`, `APPROVED` keeps the submission
   `REFERRED`, and `DECLINED` moves it to `DECLINED`.
+- `GET /api/v1/policies/submissions/{submissionId}/referrals` returns one
+  submission's referral history as an array of the flat
+  `{referralId, submissionId, reason, authority, referredTo, notes, decision,
+  decidedBy, decidedAt, createdAt}` projection, newest first, and an empty
+  array when no referral has been opened. Every accepted referral command
+  appends one review round and every decision closes the newest pending round,
+  so a submission that went through several rounds is reconstructable. The
+  tenant query, `X-EIA-Tenant`, and `X-EIA-Book: DIRECT` are forwarded; an
+  absent book is accepted, a supplied non-DIRECT book is
+  `404 BOOK_SCOPE_VIOLATION`, and expert `400`/`404` problems (including an
+  unknown or another tenant's submission) are preserved unchanged.
 - `POST /api/v1/policies/{policyId}/renew` renews a policy into a successor
   term from `{effectiveDate, expirationDate, premiumAmount?, premiumCurrency?,
   limitAmount?, limitCurrency?}`. The successor `PolicyDto` exposes

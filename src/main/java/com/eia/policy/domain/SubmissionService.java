@@ -28,6 +28,15 @@ public class SubmissionService {
     }
 
     /**
+     * Lists the submission's referral history, newest first. The expert owns
+     * the append-only rounds, the decision on each round, and the ordering; the
+     * domain only forwards the tenant scope and the submission id.
+     */
+    public List<ReferralDto> listReferrals(UUID tenantId, UUID submissionId) {
+        return client.findSubmissionReferrals(tenantId, submissionId);
+    }
+
+    /**
      * Creates a submission. A fresh expert command is {@code 201}; a repeated
      * {@code Idempotency-Key} replayed by the expert is {@code 200} with the
      * {@code Idempotent-Replayed} marker.
