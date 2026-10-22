@@ -27,6 +27,7 @@ public record CancellationDto(
         UUID approvalRef,
         UUID approvedBy,
         String status,
-        Instant createdAt
+        Instant createdAt,
+        String cancellationNumber
 ) {
 }

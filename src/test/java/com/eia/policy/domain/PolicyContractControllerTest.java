@@ -503,7 +503,7 @@ class PolicyContractControllerTest {
         return new CancellationDto(CANCELLATION_ID, TENANT, POLICY_ID, VERSION_ID, "PRO_RATA",
                 "Insured sold the business", LocalDate.of(2026, 7, 2), 0, now, 365, 183,
                 new BigDecimal("0.501370"), new BigDecimal("59835.6000"),
-                new BigDecimal("60164.4000"), "USD", null, null, "ACTIVE", now);
+                new BigDecimal("60164.4000"), "USD", null, null, "ACTIVE", now, "CX-0000001");
     }
 
     private static ReinstatementDto reinstatement() {
